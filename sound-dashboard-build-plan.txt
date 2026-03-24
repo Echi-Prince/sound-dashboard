@@ -1,0 +1,109 @@
+Sound Dashboard Build Plan
+
+Project Goal
+Build a dashboard that can identify sources of sound and selectively reduce specific sounds while preserving the audio the user wants to keep.
+
+Phase 1: Define the MVP
+Description:
+Set a narrow first version so the system is realistic and testable.
+Steps:
+1. Choose 5 to 10 sound classes to support, such as speech, keyboard, dog bark, traffic, siren, vacuum, and music.
+2. Decide whether the first version works on uploaded audio files or live microphone input.
+3. Define success metrics such as detection accuracy, latency, and perceived audio quality after suppression.
+4. Write a short product spec describing what the user can see, choose, and control in the dashboard.
+
+Phase 2: Gather Data
+Description:
+Collect labeled audio that matches the sounds the system needs to detect and suppress.
+Steps:
+1. Find public datasets for environmental sound classification and source separation.
+2. Organize audio clips by class and confirm labels are clean enough for training.
+3. Split data into training, validation, and test sets.
+4. Add a small set of real-world recordings from the target environment if possible.
+
+Phase 3: Build the Sound Classifier
+Description:
+Create a model that identifies which sound events are present in a short audio window.
+Steps:
+1. Convert audio into features such as log-mel spectrograms or MFCCs.
+2. Train a baseline classifier with a CNN, CRNN, or transformer-based audio model.
+3. Evaluate precision, recall, and confusion between similar classes.
+4. Save the model and expose a prediction interface for later integration.
+
+Phase 4: Build Selective Suppression
+Description:
+Reduce only the unwanted sound instead of muting the full audio stream.
+Steps:
+1. Start with offline audio processing before attempting real-time audio.
+2. Implement source separation or spectral masking to isolate the target class.
+3. Apply attenuation to the isolated source and recombine the remaining audio.
+4. Listen for artifacts and tune the suppression level so preserved sounds remain usable.
+
+Phase 5: Add Source Localization
+Description:
+If the project needs to identify where a sound is coming from, use directional processing.
+Steps:
+1. Use a microphone array instead of a single microphone.
+2. Estimate direction of arrival for active sound events.
+3. Add beamforming to focus on or reduce sounds from selected directions.
+4. Display source direction information in the dashboard.
+
+Phase 6: Build the Dashboard
+Description:
+Create a UI that shows what the model hears and gives the user direct control.
+Steps:
+1. Show a live waveform and spectrogram.
+2. Display detected sound labels with confidence scores and time ranges.
+3. Add toggles and sliders so the user can suppress or reduce specific classes.
+4. Show system state such as live input, processing status, and output level.
+
+Phase 7: Move to Real-Time Processing
+Description:
+Convert the offline pipeline into a live system with low enough latency to feel responsive.
+Steps:
+1. Stream microphone audio in short overlapping windows.
+2. Run detection and suppression continuously on incoming audio.
+3. Keep latency low by profiling feature extraction, inference, and output buffering.
+4. Add fallback behavior when the model is uncertain or overloaded.
+
+Phase 8: Test and Evaluate
+Description:
+Measure whether the system actually works in realistic environments.
+Steps:
+1. Test with overlapping sounds such as speech plus keyboard or traffic plus siren.
+2. Measure classification accuracy and false positives by class.
+3. Measure real-time latency and CPU or GPU usage.
+4. Run listening tests to judge whether the processed audio still sounds natural.
+
+Phase 9: Harden the System
+Description:
+Prepare the project for regular use and future expansion.
+Steps:
+1. Add logging for detections, suppression settings, and processing errors.
+2. Save model versions and configuration files for reproducibility.
+3. Add automated tests for feature extraction, inference wiring, and UI behavior.
+4. Document setup, supported hardware, and known limitations.
+
+Suggested Tech Stack
+1. Python with PyTorch and torchaudio for model development.
+2. librosa and scipy for audio preprocessing and DSP experiments.
+3. FastAPI for a local or remote processing service.
+4. React or Streamlit for the dashboard UI.
+5. sounddevice or PyAudio for microphone streaming.
+
+Recommended Development Order
+1. Build an uploaded-audio prototype.
+2. Add detection for a small set of classes.
+3. Add offline selective suppression.
+4. Build the first dashboard.
+5. Move to live microphone input.
+6. Add source localization only if the project truly needs direction tracking.
+
+Main Risks
+1. A single microphone limits source localization and separation quality.
+2. Real-time processing may introduce noticeable latency.
+3. Overlapping sounds are difficult to separate cleanly.
+4. Aggressive suppression can damage desired audio and create artifacts.
+
+First Deliverable
+The first strong milestone should be a local dashboard that accepts an audio file, identifies a few sound classes, allows the user to suppress one selected class, and exports the processed result.
