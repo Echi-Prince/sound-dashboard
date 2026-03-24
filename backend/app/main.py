@@ -1,7 +1,16 @@
-from fastapi import FastAPI, File, UploadFile
+import wave
 
+from fastapi import FastAPI, File, HTTPException, UploadFile
+
+from app.audio import build_prototype_detections, decode_wav, extract_features
 from app.config import settings
-from app.schemas import AnalysisResponse, DetectionResult, HealthResponse
+from app.schemas import (
+    AnalysisResponse,
+    AudioFeatures,
+    AudioMetadata,
+    DetectionResult,
+    HealthResponse,
+)
 
 
 app = FastAPI(
@@ -25,21 +34,49 @@ async def config() -> dict:
 
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_audio(file: UploadFile = File(...)) -> AnalysisResponse:
-    # This is a stub response that lets the frontend and backend contract stabilize
-    # before the actual audio feature extraction and model inference are added.
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="An uploaded file is required.")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    try:
+        decoded_audio = decode_wav(file_bytes)
+    except (wave.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    features = extract_features(
+        samples=decoded_audio.samples,
+        sample_rate_hz=decoded_audio.sample_rate_hz,
+    )
     detections = [
-        DetectionResult(
-            label="speech",
-            confidence=0.92,
-            start_ms=0,
-            end_ms=1000,
+        DetectionResult(**detection)
+        for detection in build_prototype_detections(
+            features=features,
+            duration_ms=decoded_audio.duration_ms,
         )
     ]
 
     return AnalysisResponse(
         filename=file.filename,
-        status="stub",
-        message="Analysis pipeline not implemented yet; returning placeholder data.",
-        sample_rate_hz=settings.sample_rate_hz,
+        status="prototype",
+        message=(
+            "Decoded WAV audio and computed prototype features. "
+            "Current detections are heuristic and will be replaced by a model."
+        ),
+        metadata=AudioMetadata(
+            sample_rate_hz=decoded_audio.sample_rate_hz,
+            num_channels=decoded_audio.num_channels,
+            sample_width_bytes=decoded_audio.sample_width_bytes,
+            duration_ms=decoded_audio.duration_ms,
+            frame_count=decoded_audio.frame_count,
+        ),
+        features=AudioFeatures(
+            rms=features.rms,
+            peak_amplitude=features.peak_amplitude,
+            zero_crossing_rate=features.zero_crossing_rate,
+            dominant_activity_ratio=features.dominant_activity_ratio,
+        ),
         detections=detections,
     )

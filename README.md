@@ -24,12 +24,12 @@ The current backend scaffold provides:
 2. `GET /config`
    - Returns the configured sample rate, chunk duration, overlap, and supported classes.
 3. `POST /analyze`
-   - Accepts an uploaded audio file and returns a stub analysis payload.
+   - Accepts a PCM WAV file, decodes it, computes basic audio features, and returns prototype detections.
 
-The analysis route is intentionally a placeholder. It establishes the request and response contract that the real model pipeline will use later.
+The current analysis route is a prototype. It now performs real WAV decoding and feature extraction, but the class detections are still heuristic placeholders rather than model-backed predictions.
 
 Suggested Next Implementation Steps
-1. Add audio decoding and waveform normalization.
+1. Add waveform normalization and resampling to a shared target sample rate.
 2. Add feature extraction with log-mel spectrograms.
 3. Plug in a baseline sound event classifier.
 4. Persist session results for later dashboard playback.
@@ -48,4 +48,5 @@ From the `backend/` directory, the API will be available locally at `http://127.
 
 Notes
 1. This repo does not yet contain a trained model.
-2. The backend routes are designed so the model can be added without rewriting the API shape.
+2. `POST /analyze` currently supports PCM WAV uploads only.
+3. The backend routes are designed so the model can be added without rewriting the API shape.
