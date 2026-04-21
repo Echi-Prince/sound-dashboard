@@ -14,6 +14,14 @@ const recordingSaveForm = document.querySelector("#recording-save-form");
 const recordingLabelInput = document.querySelector("#recording-label");
 const recordingSplitInput = document.querySelector("#recording-split");
 const recordingSourceNameInput = document.querySelector("#recording-source-name");
+const trainingUploadForm = document.querySelector("#training-upload-form");
+const trainingUploadInput = document.querySelector("#training-upload-input");
+const trainingUploadLabelInput = document.querySelector("#training-upload-label");
+const trainingUploadSplitInput = document.querySelector("#training-upload-split");
+const trainingUploadSourceNameInput = document.querySelector("#training-upload-source-name");
+const trainingUploadSubmitButton = document.querySelector("#training-upload-submit");
+const trainingUploadStatus = document.querySelector("#training-upload-status");
+const trainingUploadList = document.querySelector("#training-upload-list");
 const recentSessions = document.querySelector("#recent-sessions");
 const datasetSummary = document.querySelector("#dataset-summary");
 const datasetRecordings = document.querySelector("#dataset-recordings");
@@ -28,6 +36,7 @@ const playbackPanel = document.querySelector("#playback-panel");
 const timelineContainer = document.querySelector("#timeline");
 const selectionSummary = document.querySelector("#selection-summary");
 const SUPPRESSION_PRESET_STORAGE_KEY = "sound_dashboard_suppression_profile_v1";
+const DASHBOARD_SECTION_STORAGE_KEY = "sound_dashboard_sections_v1";
 
 let currentFile = null;
 let currentAudioUrl = "";
@@ -56,10 +65,18 @@ let currentDatasetRecordingId = "";
 let currentDatasetRecording = null;
 let trainingStatusRefreshHandle = null;
 let artifactActivationInFlight = false;
+let trainingUploadInFlight = false;
+
+const dashboardSectionElements = Array.from(document.querySelectorAll("[data-dashboard-section]"));
+const workspaceTabButtons = Array.from(document.querySelectorAll("[data-toggle-section]"));
+const openAllSectionsButton = document.querySelector("#open-all-sections-button");
+const closeAllSectionsButton = document.querySelector("#close-all-sections-button");
 
 void checkBackendHealth();
 void refreshSessionList();
 void refreshDatasetManager();
+initializeWorkspaceTabs();
+renderTrainingUploadSelection();
 
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -87,6 +104,11 @@ recordingSaveForm?.addEventListener("submit", (event) => {
   void saveCurrentRecordingToTrainingSet();
 });
 
+trainingUploadForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void uploadTrainingFilesToDataset();
+});
+
 fileInput?.addEventListener("change", () => {
   if (fileInput.files?.[0]) {
     currentFile = null;
@@ -99,6 +121,25 @@ fileInput?.addEventListener("change", () => {
     currentUploadConversionPromise = convertSelectedUploadToWav(fileInput.files[0]);
   }
   updateRecordingUiState();
+});
+
+trainingUploadInput?.addEventListener("change", () => {
+  renderTrainingUploadSelection();
+  updateTrainingUploadUiState();
+});
+
+workspaceTabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    toggleDashboardSection(button.dataset.toggleSection);
+  });
+});
+
+openAllSectionsButton?.addEventListener("click", () => {
+  setAllDashboardSectionsVisibility(true);
+});
+
+closeAllSectionsButton?.addEventListener("click", () => {
+  setAllDashboardSectionsVisibility(false);
 });
 
 window.addEventListener("resize", () => {
@@ -117,12 +158,13 @@ async function analyzeCurrentFile() {
 
   submitButton.disabled = true;
   recordAnalyzeButton.disabled = true;
-  setStatus(`Uploading ${file.name}...`, false);
+  setStatus(`Sending ${file.name} to the backend for analysis...`, false);
   try {
     currentFile = file;
     const formData = new FormData();
     formData.append("file", file);
     const response = await fetch(`${API_BASE_URL}/analyze`, { method: "POST", body: formData });
+    setStatus(`Backend finished uploading ${file.name}. Processing response...`, false);
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Analysis request failed.");
     await prepareAudioPreview(file);
@@ -288,6 +330,66 @@ async function saveCurrentRecordingToTrainingSet() {
   }
 }
 
+async function uploadTrainingFilesToDataset() {
+  const selectedFiles = Array.from(trainingUploadInput?.files || []);
+  if (!selectedFiles.length) {
+    setTrainingUploadStatus("Choose at least one audio file to upload into the training dataset.", true);
+    return;
+  }
+
+  trainingUploadInFlight = true;
+  updateTrainingUploadUiState();
+  const uploadLabel = trainingUploadLabelInput?.value || "speech";
+  const uploadSplit = trainingUploadSplitInput?.value || "";
+  const uploadSourceName = trainingUploadSourceNameInput?.value.trim() || "manual-upload";
+  let completedCount = 0;
+
+  try {
+    const uploadedPaths = [];
+    for (const [index, sourceFile] of selectedFiles.entries()) {
+      setTrainingUploadStatus(
+        `Preparing ${sourceFile.name} (${index + 1}/${selectedFiles.length}) for training ingest...`,
+        false,
+      );
+      const wavFile = await convertAudioFileToWav(sourceFile);
+      const formData = new FormData();
+      formData.append("file", wavFile);
+      formData.append("label", uploadLabel);
+      formData.append("split", uploadSplit);
+      formData.append("source_name", uploadSourceName);
+
+      setTrainingUploadStatus(
+        `Uploading ${wavFile.name} (${index + 1}/${selectedFiles.length}) into the training dataset...`,
+        false,
+      );
+      const response = await fetch(`${API_BASE_URL}/recordings`, { method: "POST", body: formData });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.detail || `Failed to upload ${sourceFile.name}.`);
+      }
+
+      uploadedPaths.push(payload.relative_path);
+      completedCount += 1;
+    }
+
+    trainingUploadInput.value = "";
+    renderTrainingUploadSelection();
+    await refreshDatasetManager();
+    const finalMessage = completedCount === 1
+      ? `Uploaded 1 training clip to ${uploadedPaths[0]}.`
+      : `Uploaded ${completedCount} training clips into the dataset.`;
+    setTrainingUploadStatus(finalMessage, false);
+  } catch (error) {
+    setTrainingUploadStatus(
+      error.message || `Training upload stopped after ${completedCount} completed file(s).`,
+      true,
+    );
+  } finally {
+    trainingUploadInFlight = false;
+    updateTrainingUploadUiState();
+  }
+}
+
 async function convertRecordedBlobToWav(blob) {
   const context = getAudioContext();
   if (context.state === "suspended") {
@@ -298,6 +400,11 @@ async function convertRecordedBlobToWav(blob) {
 }
 
 async function convertAudioFileToWav(file) {
+  const compatibleWavFile = await tryUseCompatibleWavFile(file);
+  if (compatibleWavFile) {
+    return compatibleWavFile;
+  }
+
   const context = getAudioContext();
   if (context.state === "suspended") {
     await context.resume();
@@ -316,6 +423,73 @@ async function convertAudioFileToWav(file) {
     type: "audio/wav",
     lastModified: Date.now(),
   });
+}
+
+async function tryUseCompatibleWavFile(file) {
+  const headerBytes = new Uint8Array(await file.slice(0, Math.min(file.size, 262144)).arrayBuffer());
+  const wavMetadata = parseWavCompatibility(headerBytes);
+  if (!wavMetadata.isCompatible) {
+    return null;
+  }
+
+  if (file.type === "audio/wav" || file.name.toLowerCase().endsWith(".wav")) {
+    return file;
+  }
+
+  return new File([file], buildCompatibleWavFilename(file.name), {
+    type: "audio/wav",
+    lastModified: file.lastModified || Date.now(),
+  });
+}
+
+function parseWavCompatibility(bytes) {
+  if (!bytes || bytes.length < 44) {
+    return { isCompatible: false };
+  }
+
+  if (readAscii(bytes, 0, 4) !== "RIFF" || readAscii(bytes, 8, 4) !== "WAVE") {
+    return { isCompatible: false };
+  }
+
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const chunkId = readAscii(bytes, offset, 4);
+    const chunkSize = readUint32LittleEndian(bytes, offset + 4);
+    const chunkDataOffset = offset + 8;
+
+    if (chunkId === "fmt " && chunkDataOffset + 16 <= bytes.length) {
+      const audioFormat = readUint16LittleEndian(bytes, chunkDataOffset);
+      const bitsPerSample = readUint16LittleEndian(bytes, chunkDataOffset + 14);
+      return {
+        isCompatible: audioFormat === 1 && [8, 16, 32].includes(bitsPerSample),
+      };
+    }
+
+    offset = chunkDataOffset + chunkSize + (chunkSize % 2);
+  }
+
+  return { isCompatible: false };
+}
+
+function readAscii(bytes, offset, length) {
+  let value = "";
+  for (let index = 0; index < length; index += 1) {
+    value += String.fromCharCode(bytes[offset + index] || 0);
+  }
+  return value;
+}
+
+function readUint16LittleEndian(bytes, offset) {
+  return (bytes[offset] || 0) | ((bytes[offset + 1] || 0) << 8);
+}
+
+function readUint32LittleEndian(bytes, offset) {
+  return (
+    (bytes[offset] || 0) |
+    ((bytes[offset + 1] || 0) << 8) |
+    ((bytes[offset + 2] || 0) << 16) |
+    ((bytes[offset + 3] || 0) << 24)
+  ) >>> 0;
 }
 
 function encodeAudioBufferToWav(audioBuffer) {
@@ -388,12 +562,24 @@ function setRecordingStatus(message, isError) {
   recordingStatus.classList.toggle("error", Boolean(isError));
 }
 
+function setTrainingUploadStatus(message, isError) {
+  if (!trainingUploadStatus) return;
+  trainingUploadStatus.textContent = message;
+  trainingUploadStatus.classList.toggle("error", Boolean(isError));
+}
+
 function updateRecordingUiState() {
   const hasAnalyzableFile = Boolean(currentRecordedFile || fileInput?.files?.[0] || currentFile);
   if (recordStartButton) recordStartButton.disabled = isRecording;
   if (recordStopButton) recordStopButton.disabled = !isRecording;
   if (recordAnalyzeButton) recordAnalyzeButton.disabled = isRecording || !hasAnalyzableFile;
   if (recordSaveButton) recordSaveButton.disabled = isRecording || !currentRecordingBlob;
+  updateTrainingUploadUiState();
+}
+
+function updateTrainingUploadUiState() {
+  if (!trainingUploadSubmitButton) return;
+  trainingUploadSubmitButton.disabled = trainingUploadInFlight || !(trainingUploadInput?.files?.length);
 }
 
 function renderAnalysis(payload) {
@@ -1010,6 +1196,81 @@ async function checkBackendHealth() {
     setStatus("Frontend ready. Backend connection is healthy.", false);
   } catch {
     setStatus("Frontend loaded, but the backend is not reachable at http://127.0.0.1:8000. Start the backend or run start-dev.cmd.", true);
+  }
+}
+
+function renderTrainingUploadSelection() {
+  if (!trainingUploadList) return;
+  const selectedFiles = Array.from(trainingUploadInput?.files || []);
+  if (!selectedFiles.length) {
+    setEmpty(trainingUploadList, "upload-list", "No training files selected.");
+    return;
+  }
+
+  trainingUploadList.className = "upload-list";
+  trainingUploadList.innerHTML = selectedFiles.map((file) => `
+    <article class="upload-list-item">
+      <strong>${escapeHtml(file.name)}</strong>
+      <p>${Math.round(file.size / 1024)} KB</p>
+    </article>`).join("");
+}
+
+function initializeWorkspaceTabs() {
+  const storedState = loadDashboardSectionState();
+  for (const section of dashboardSectionElements) {
+    const shouldShow = storedState[section.id] !== false;
+    section.classList.toggle("is-hidden", !shouldShow);
+  }
+  syncWorkspaceTabs();
+}
+
+function toggleDashboardSection(sectionId) {
+  const targetSection = dashboardSectionElements.find((section) => section.id === sectionId);
+  if (!targetSection) return;
+  targetSection.classList.toggle("is-hidden");
+  syncWorkspaceTabs();
+  persistDashboardSectionState();
+}
+
+function setAllDashboardSectionsVisibility(shouldShow) {
+  for (const section of dashboardSectionElements) {
+    section.classList.toggle("is-hidden", !shouldShow);
+  }
+  syncWorkspaceTabs();
+  persistDashboardSectionState();
+}
+
+function syncWorkspaceTabs() {
+  for (const button of workspaceTabButtons) {
+    const targetSection = dashboardSectionElements.find((section) => section.id === button.dataset.toggleSection);
+    const isVisible = Boolean(targetSection) && !targetSection.classList.contains("is-hidden");
+    button.classList.toggle("is-active", isVisible);
+    button.setAttribute("aria-pressed", isVisible ? "true" : "false");
+  }
+}
+
+function persistDashboardSectionState() {
+  try {
+    const payload = Object.fromEntries(
+      dashboardSectionElements.map((section) => [section.id, !section.classList.contains("is-hidden")])
+    );
+    window.localStorage.setItem(DASHBOARD_SECTION_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Keep section toggles working even if storage is unavailable.
+  }
+}
+
+function loadDashboardSectionState() {
+  try {
+    const rawValue = window.localStorage.getItem(DASHBOARD_SECTION_STORAGE_KEY);
+    if (!rawValue) return {};
+    const parsedValue = JSON.parse(rawValue);
+    if (!parsedValue || typeof parsedValue !== "object" || Array.isArray(parsedValue)) {
+      return {};
+    }
+    return parsedValue;
+  } catch {
+    return {};
   }
 }
 

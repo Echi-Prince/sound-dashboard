@@ -6,6 +6,7 @@ Latest Local Milestone
 3. Kept the recorded-audio path compatible with the existing analyze, session, and suppression preview flows.
 4. Added backend tests for recording ingestion and kept the existing backend suite green.
 5. Added dataset-manager controls for manifest building, background training runs, archived artifacts, and active-model switching with older versions kept as backup candidates.
+6. Added direct training-data upload from the site, workspace section tabs, a manifest-path wrapping fix, and a compatible-WAV upload fast path for large valid files.
 
 Repository Setup
 1. Git was installed on the machine.
@@ -127,6 +128,10 @@ Frontend Progress
 17. Added waveform and spectrogram review layers synchronized to playback.
 18. Added a Recent Sessions panel that reloads saved analyses and processed previews from the backend.
 19. Added UI messaging that shows when detections came from baseline fallback instead of the trained model.
+20. Added a Dataset Manager upload form so local clips can be labeled and sent directly into the training dataset from the site.
+21. Added workspace tabs that let major dashboard sections be opened or hidden without leaving the page.
+22. Added a compatible-WAV fast path so already-valid files can skip browser re-encoding before analysis or training ingest.
+23. Fixed long manifest paths so they wrap inside the dataset summary card instead of overflowing.
 
 Current State of the Prototype
 1. The backend can accept a PCM WAV file through `/analyze` and a labeled training WAV file through `/recordings`.
@@ -151,6 +156,8 @@ Current State of the Prototype
 20. Uploaded audio files are now converted to compatible `.wav` payloads in the browser before analysis or suppression requests are sent.
 21. Completed training runs are now archived into versioned artifact folders and promoted through an active-model pointer instead of overwriting the only trained artifact path.
 22. Older trained manifests remain available as backup inference candidates if the active model returns no classes.
+23. Local training clips can now be uploaded straight from the Dataset Manager without using the browser recorder first.
+24. Major dashboard sections can now be opened or hidden from a Workspace Tabs bar, with the layout remembered locally.
 
 Verification Completed
 1. The backend source files were checked with Python compilation:

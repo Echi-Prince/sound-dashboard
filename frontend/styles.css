@@ -81,6 +81,33 @@ h1 {
   margin-bottom: 24px;
 }
 
+.workspace-tabs-panel {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.workspace-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.workspace-tab {
+  background: rgba(0, 109, 119, 0.1);
+  color: var(--accent);
+  box-shadow: none;
+}
+
+.workspace-tab.is-active {
+  background: var(--accent);
+  color: white;
+}
+
+.dashboard-section.is-hidden {
+  display: none;
+}
+
 .recording-grid {
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
@@ -245,6 +272,62 @@ dd {
   border: 1px solid rgba(0, 109, 119, 0.12);
 }
 
+.dataset-upload-shell {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(0, 109, 119, 0.12);
+}
+
+.dataset-upload-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) repeat(3, minmax(0, 0.8fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.dataset-upload-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.dataset-upload-form input,
+.dataset-upload-form select {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(27, 28, 29, 0.12);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink);
+  font: inherit;
+}
+
+.upload-list {
+  display: grid;
+  gap: 10px;
+}
+
+.upload-list-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(0, 109, 119, 0.1);
+}
+
+.upload-list-item strong,
+.upload-list-item p {
+  margin: 0;
+}
+
 .dataset-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -262,6 +345,9 @@ dd {
 
 .dataset-summary-card strong {
   font-size: 1.2rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .dataset-count-grid {
@@ -739,6 +825,10 @@ code {
   }
 
   .dataset-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dataset-upload-form {
     grid-template-columns: 1fr;
   }
 

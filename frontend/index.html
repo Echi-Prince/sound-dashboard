@@ -17,7 +17,30 @@
         </p>
       </section>
 
-      <section class="panel uploader">
+      <section class="panel workspace-tabs-panel">
+        <div class="section-head">
+          <div>
+            <h2>Workspace Tabs</h2>
+            <p class="muted">Open or hide dashboard sections without leaving the page.</p>
+          </div>
+          <div class="button-row">
+            <button id="open-all-sections-button" type="button" class="subtle-button">Open All</button>
+            <button id="close-all-sections-button" type="button" class="subtle-button">Close All</button>
+          </div>
+        </div>
+        <div id="workspace-tabs" class="workspace-tabs">
+          <button type="button" class="workspace-tab is-active" data-toggle-section="analysis-upload">Analyze</button>
+          <button type="button" class="workspace-tab is-active" data-toggle-section="record-audio">Recorder</button>
+          <button type="button" class="workspace-tab is-active" data-toggle-section="recent-sessions-panel">Sessions</button>
+          <button type="button" class="workspace-tab is-active" data-toggle-section="dataset-manager-panel">Dataset</button>
+          <button type="button" class="workspace-tab is-active" data-toggle-section="analysis-summary-panel">Summary</button>
+          <button type="button" class="workspace-tab is-active" data-toggle-section="detected-events-panel">Events</button>
+          <button type="button" class="workspace-tab is-active" data-toggle-section="playback-panel-section">Playback</button>
+          <button type="button" class="workspace-tab is-active" data-toggle-section="timeline-panel">Timeline</button>
+        </div>
+      </section>
+
+      <section id="analysis-upload" class="panel uploader dashboard-section" data-dashboard-section>
         <div>
           <h2>Analyze File</h2>
           <p class="muted">Backend target: <code>http://127.0.0.1:8000/analyze</code></p>
@@ -34,7 +57,7 @@
         </p>
       </section>
 
-      <section class="panel recorder-panel">
+      <section id="record-audio" class="panel recorder-panel dashboard-section" data-dashboard-section>
         <div class="section-head">
           <div>
             <h2>Record Audio</h2>
@@ -82,7 +105,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section id="recent-sessions-panel" class="panel dashboard-section" data-dashboard-section>
         <div class="section-head">
           <h2>Recent Sessions</h2>
           <p class="muted">Reload saved analysis and suppression previews from the backend.</p>
@@ -90,10 +113,50 @@
         <div id="recent-sessions" class="session-list empty-state">No saved sessions yet.</div>
       </section>
 
-      <section class="panel">
+      <section id="dataset-manager-panel" class="panel dashboard-section" data-dashboard-section>
         <div class="section-head">
           <h2>Dataset Manager</h2>
           <p class="muted">Review clips saved in <code>training/real_recordings/</code>, preview them, and correct label or split mistakes.</p>
+        </div>
+        <div class="dataset-upload-shell">
+          <div>
+            <h3>Upload Training Data</h3>
+            <p class="muted">Add labeled clips from your computer straight into the training dataset. Unsupported audio files are converted to compatible WAV first.</p>
+          </div>
+          <form id="training-upload-form" class="dataset-upload-form">
+            <label class="file-input">
+              <span>Select training clips</span>
+              <input id="training-upload-input" type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac,.webm" multiple required />
+            </label>
+            <label>
+              <span>Training Label</span>
+              <select id="training-upload-label" required>
+                <option value="speech">speech</option>
+                <option value="keyboard">keyboard</option>
+                <option value="dog_bark">dog_bark</option>
+                <option value="traffic">traffic</option>
+                <option value="siren">siren</option>
+                <option value="vacuum">vacuum</option>
+                <option value="music">music</option>
+              </select>
+            </label>
+            <label>
+              <span>Dataset Split</span>
+              <select id="training-upload-split">
+                <option value="">unspecified</option>
+                <option value="train">train</option>
+                <option value="val">val</option>
+                <option value="test">test</option>
+              </select>
+            </label>
+            <label>
+              <span>Source Name</span>
+              <input id="training-upload-source-name" type="text" value="manual-upload" maxlength="40" />
+            </label>
+            <button id="training-upload-submit" type="submit">Upload To Training Set</button>
+          </form>
+          <p id="training-upload-status" class="status-banner" aria-live="polite">Choose one or more clips to upload into the training dataset.</p>
+          <div id="training-upload-list" class="upload-list empty-state">No training files selected.</div>
         </div>
         <div id="dataset-summary" class="dataset-summary empty-state">Loading dataset summary...</div>
         <div class="dataset-grid">
@@ -102,7 +165,7 @@
         </div>
       </section>
 
-      <section class="results-grid">
+      <section id="analysis-summary-panel" class="results-grid dashboard-section" data-dashboard-section>
         <article class="panel">
           <h2>Session</h2>
           <dl id="session-summary" class="metric-list empty-state">
@@ -144,7 +207,7 @@
         </article>
       </section>
 
-      <section class="panel">
+      <section id="detected-events-panel" class="panel dashboard-section" data-dashboard-section>
         <div class="section-head">
           <h2>Detected Events</h2>
           <p id="detections-caption" class="muted">Highest-confidence labels returned by the active classifier backend.</p>
@@ -152,7 +215,7 @@
         <div id="detections" class="detections empty-state">No detections yet.</div>
       </section>
 
-      <section class="panel">
+      <section id="playback-panel-section" class="panel dashboard-section" data-dashboard-section>
         <div class="section-head">
           <h2>Playback</h2>
           <p class="muted">Review the uploaded clip and jump directly to detected spans.</p>
@@ -162,7 +225,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section id="timeline-panel" class="panel dashboard-section" data-dashboard-section>
         <div class="section-head">
           <h2>Timeline</h2>
           <p class="muted">Click a detected span to scrub the player and inspect that interval.</p>
