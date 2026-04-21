@@ -1,4 +1,4 @@
-# Sound Dashboard Prototype
+# Sound Dashboard
 
 This repository now includes planning documents plus a working sound analysis dashboard prototype.
 
