@@ -15,6 +15,9 @@ const recordingLabelInput = document.querySelector("#recording-label");
 const recordingSplitInput = document.querySelector("#recording-split");
 const recordingSourceNameInput = document.querySelector("#recording-source-name");
 const recentSessions = document.querySelector("#recent-sessions");
+const datasetSummary = document.querySelector("#dataset-summary");
+const datasetRecordings = document.querySelector("#dataset-recordings");
+const datasetDetail = document.querySelector("#dataset-detail");
 const detectionsCaption = document.querySelector("#detections-caption");
 const sessionSummary = document.querySelector("#session-summary");
 const metadataSummary = document.querySelector("#metadata-summary");
@@ -48,9 +51,15 @@ let currentRecordingBlob = null;
 let currentRecordedFile = null;
 let currentRecordingUrl = "";
 let isRecording = false;
+let currentUploadConversionPromise = null;
+let currentDatasetRecordingId = "";
+let currentDatasetRecording = null;
+let trainingStatusRefreshHandle = null;
+let artifactActivationInFlight = false;
 
 void checkBackendHealth();
 void refreshSessionList();
+void refreshDatasetManager();
 
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -80,13 +89,14 @@ recordingSaveForm?.addEventListener("submit", (event) => {
 
 fileInput?.addEventListener("change", () => {
   if (fileInput.files?.[0]) {
-    currentFile = fileInput.files[0];
+    currentFile = null;
     currentRecordedFile = null;
     currentRecordingBlob = null;
     if (recordingPreview) {
       setEmpty(recordingPreview, "processed-player", "Record a clip to preview it here.");
     }
     setRecordingStatus("Microphone idle.", false);
+    currentUploadConversionPromise = convertSelectedUploadToWav(fileInput.files[0]);
   }
   updateRecordingUiState();
 });
@@ -99,9 +109,9 @@ window.addEventListener("resize", () => {
 });
 
 async function analyzeCurrentFile() {
-  const file = currentFile || fileInput.files?.[0];
+  const file = await resolveAnalyzableFile();
   if (!file) {
-    setStatus("Choose a WAV file or record audio before running analysis.", true);
+    setStatus("Choose an audio file or record audio before running analysis.", true);
     return;
   }
 
@@ -147,6 +157,43 @@ async function prepareAudioPreview(file) {
   } catch {
     currentWaveformPeaks = [];
     currentSpectrogramFrames = [];
+  }
+}
+
+async function resolveAnalyzableFile() {
+  if (currentRecordedFile) {
+    currentFile = currentRecordedFile;
+    return currentRecordedFile;
+  }
+
+  if (fileInput?.files?.[0]) {
+    if (!currentUploadConversionPromise) {
+      currentUploadConversionPromise = convertSelectedUploadToWav(fileInput.files[0]);
+    }
+    return currentUploadConversionPromise;
+  }
+
+  return currentFile;
+}
+
+async function convertSelectedUploadToWav(file) {
+  setStatus(`Preparing ${file.name} for backend analysis...`, false);
+  try {
+    const wavFile = await convertAudioFileToWav(file);
+    currentFile = wavFile;
+    setStatus(
+      wavFile.name === file.name
+        ? `${file.name} is ready for analysis.`
+        : `${file.name} converted to ${wavFile.name} for backend compatibility.`,
+      false,
+    );
+    return wavFile;
+  } catch (error) {
+    currentFile = null;
+    setStatus(error.message || "Failed to convert the selected audio file.", true);
+    throw error;
+  } finally {
+    updateRecordingUiState();
   }
 }
 
@@ -197,12 +244,13 @@ async function finalizeRecording() {
     currentRecordingBlob = wavBlob;
     currentRecordedFile = new File([wavBlob], buildRecordedFilename(), { type: "audio/wav" });
     currentFile = currentRecordedFile;
+    currentUploadConversionPromise = null;
     currentRecordingUrl = URL.createObjectURL(wavBlob);
     renderRecordingPreview(currentRecordingUrl, currentRecordedFile.name, wavBlob.size);
     setRecordingStatus("Recording ready. Analyze it or save it to the training set.", false);
   } catch (error) {
     currentRecordingBlob = null;
-    setRecordingStatus(error.message || "Failed to convert the recording into WAV.", true);
+    setRecordingStatus(error.message || "Failed to convert the recording into a compatible WAV file.", true);
     if (recordingPreview) {
       setEmpty(recordingPreview, "processed-player", "Record a clip to preview it here.");
     }
@@ -232,6 +280,7 @@ async function saveCurrentRecordingToTrainingSet() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Failed to save the recording.");
     setRecordingStatus(`Saved training clip to ${payload.relative_path}.`, false);
+    await refreshDatasetManager();
   } catch (error) {
     setRecordingStatus(error.message || "Failed to save the recording.", true);
   } finally {
@@ -246,6 +295,27 @@ async function convertRecordedBlobToWav(blob) {
   }
   const audioBuffer = await context.decodeAudioData((await blob.arrayBuffer()).slice(0));
   return encodeAudioBufferToWav(audioBuffer);
+}
+
+async function convertAudioFileToWav(file) {
+  const context = getAudioContext();
+  if (context.state === "suspended") {
+    await context.resume();
+  }
+
+  let audioBuffer;
+  try {
+    audioBuffer = await context.decodeAudioData((await file.arrayBuffer()).slice(0));
+  } catch {
+    throw new Error("The selected file could not be decoded in the browser.");
+  }
+
+  const wavBlob = encodeAudioBufferToWav(audioBuffer);
+  const wavFilename = buildCompatibleWavFilename(file.name);
+  return new File([wavBlob], wavFilename, {
+    type: "audio/wav",
+    lastModified: Date.now(),
+  });
 }
 
 function encodeAudioBufferToWav(audioBuffer) {
@@ -287,6 +357,13 @@ function writeAscii(view, offset, value) {
   }
 }
 
+function buildCompatibleWavFilename(filename) {
+  const basename = String(filename || "audio")
+    .replace(/\.[^./\\]+$/, "")
+    .trim();
+  return `${basename || "audio"}.wav`;
+}
+
 function buildRecordedFilename() {
   const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
   return `recording-${stamp}.wav`;
@@ -295,7 +372,7 @@ function buildRecordedFilename() {
 function renderRecordingPreview(url, filename, byteCount) {
   if (!recordingPreview) return;
   recordingPreview.className = "processed-player";
-  recordingPreview.innerHTML = `<strong>${escapeHtml(filename)}</strong><p class="muted">${Math.round(byteCount / 1024)} KB WAV clip ready for analysis or training ingest.</p><audio controls preload="metadata" src="${escapeHtml(url)}"></audio>`;
+  recordingPreview.innerHTML = `<strong>${escapeHtml(filename)}</strong><p class="muted">${Math.round(byteCount / 1024)} KB compatible WAV clip ready for analysis or training ingest.</p><audio controls preload="metadata" src="${escapeHtml(url)}"></audio>`;
 }
 
 function stopRecordingStream() {
@@ -312,7 +389,7 @@ function setRecordingStatus(message, isError) {
 }
 
 function updateRecordingUiState() {
-  const hasAnalyzableFile = Boolean(fileInput?.files?.[0] || currentFile);
+  const hasAnalyzableFile = Boolean(currentRecordedFile || fileInput?.files?.[0] || currentFile);
   if (recordStartButton) recordStartButton.disabled = isRecording;
   if (recordStopButton) recordStopButton.disabled = !isRecording;
   if (recordAnalyzeButton) recordAnalyzeButton.disabled = isRecording || !hasAnalyzableFile;
@@ -495,7 +572,7 @@ function getSuppressionProfile() {
 }
 
 async function requestProcessedAudio({ file, suppressionProfile }) {
-  if (!file) throw new Error("Upload a file before requesting suppression.");
+  if (!file) throw new Error("Select or record an audio file before requesting suppression.");
   if (!Object.keys(suppressionProfile).length) throw new Error("Select at least one detected class for suppression.");
   const formData = new FormData();
   formData.append("file", file);
@@ -844,6 +921,7 @@ function clearResults() {
   currentWaveformPeaks = [];
   currentSpectrogramFrames = [];
   currentWaveformDurationMs = 0;
+  currentUploadConversionPromise = null;
   if (!currentRecordingBlob) {
     currentRecordedFile = null;
   }
@@ -865,7 +943,7 @@ function clearResults() {
   setEmpty(featureSummary, "metric-list", "Waiting for results.");
   setEmpty(spectralSummary, "metric-list", "Waiting for results.");
   setEmpty(detectionsContainer, "detections", "No detections yet.");
-  setEmpty(playbackPanel, "playback-panel", "Upload a WAV file to enable playback controls.");
+  setEmpty(playbackPanel, "playback-panel", "Upload or record audio to enable playback controls.");
   setEmpty(timelineContainer, "timeline", "No timeline yet.");
   setEmpty(selectionSummary, "selection-summary", "No event selected.");
   if (detectionsCaption) {
@@ -882,6 +960,43 @@ async function refreshSessionList() {
     renderSessionList(payload.sessions || []);
   } catch {
     setEmpty(recentSessions, "session-list", "Saved sessions are unavailable.");
+  }
+}
+
+async function refreshDatasetManager() {
+  try {
+    const [recordingsResponse, summaryResponse, trainingResponse, artifactsResponse] = await Promise.all([
+      fetch(`${API_BASE_URL}/recordings`),
+      fetch(`${API_BASE_URL}/recordings/summary`),
+      fetch(`${API_BASE_URL}/training/status`),
+      fetch(`${API_BASE_URL}/artifacts`),
+    ]);
+    const recordingsPayload = await recordingsResponse.json();
+    const summaryPayload = await summaryResponse.json();
+    const trainingPayload = await trainingResponse.json();
+    const artifactsPayload = await artifactsResponse.json();
+    if (!recordingsResponse.ok) throw new Error(recordingsPayload.detail || "Failed to load saved recordings.");
+    if (!summaryResponse.ok) throw new Error(summaryPayload.detail || "Failed to load dataset summary.");
+    if (!trainingResponse.ok) throw new Error(trainingPayload.detail || "Failed to load training status.");
+    if (!artifactsResponse.ok) throw new Error(artifactsPayload.detail || "Failed to load model artifacts.");
+    renderDatasetSummary(summaryPayload, trainingPayload, artifactsPayload.artifacts || []);
+    renderDatasetRecordings(recordingsPayload.recordings || []);
+    syncTrainingStatusPolling(trainingPayload.status);
+    if (currentDatasetRecordingId) {
+      const stillExists = (recordingsPayload.recordings || []).some((recording) => recording.recording_id === currentDatasetRecordingId);
+      if (stillExists) {
+        await loadDatasetRecording(currentDatasetRecordingId, false);
+      } else {
+        currentDatasetRecordingId = "";
+        currentDatasetRecording = null;
+        setEmpty(datasetDetail, "dataset-detail", "Select a saved training clip to preview and edit it.");
+      }
+    }
+  } catch {
+    setEmpty(datasetSummary, "dataset-summary", "Dataset summary is unavailable.");
+    setEmpty(datasetRecordings, "session-list", "Saved training clips are unavailable.");
+    setEmpty(datasetDetail, "dataset-detail", "Saved training clips are unavailable.");
+    syncTrainingStatusPolling("idle");
   }
 }
 
@@ -914,6 +1029,310 @@ function renderSessionList(sessions) {
   });
 }
 
+function renderDatasetRecordings(recordings) {
+  if (!recordings.length) {
+    setEmpty(datasetRecordings, "session-list", "No saved training clips yet.");
+    return;
+  }
+  datasetRecordings.className = "session-list";
+  datasetRecordings.innerHTML = recordings.map((recording) => `
+    <article class="dataset-card ${recording.recording_id === currentDatasetRecordingId ? "is-active" : ""}">
+      <div>
+        <strong>${escapeHtml(recording.filename)}</strong>
+        <p>${escapeHtml(recording.relative_path)}</p>
+      </div>
+      <div class="dataset-card-meta">
+        <span class="dataset-meta-chip">${escapeHtml(recording.label)}</span>
+        <span class="dataset-meta-chip">${escapeHtml(recording.split || "unspecified")}</span>
+        <span class="dataset-meta-chip">${formatMilliseconds(recording.duration_ms)}</span>
+      </div>
+      <button type="button" class="subtle-button" data-recording-id="${escapeHtml(recording.recording_id)}">Manage Clip</button>
+    </article>`).join("");
+  datasetRecordings.querySelectorAll("[data-recording-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void loadDatasetRecording(button.dataset.recordingId, true);
+    });
+  });
+}
+
+function renderDatasetSummary(summary, trainingStatus, artifacts) {
+  if (!datasetSummary) return;
+  const artifactCards = artifacts.length
+    ? artifacts.map((artifact) => `
+      <article class="artifact-card ${artifact.is_active ? "is-active" : ""}">
+        <div class="artifact-card-head">
+          <div>
+            <strong>${escapeHtml(artifact.model_name)}</strong>
+            <p class="muted">${escapeHtml(artifact.relative_path)}</p>
+          </div>
+          <span class="dataset-meta-chip">${artifact.is_active ? "active" : "standby"}</span>
+        </div>
+        <div class="artifact-card-meta">
+          <span class="dataset-meta-chip">${artifact.training_example_count} train</span>
+          <span class="dataset-meta-chip">${artifact.validation_example_count} val</span>
+          <span class="dataset-meta-chip">${artifact.class_names.length} classes</span>
+          <span class="dataset-meta-chip">${artifact.source_run_id ? escapeHtml(artifact.source_run_id) : "manual/default"}</span>
+        </div>
+        <p class="muted">Weights: <code>${escapeHtml(artifact.weights_relative_path)}</code></p>
+        <p class="muted">Updated ${formatTimestamp(artifact.updated_at)}</p>
+        <div class="button-row">
+          <button
+            type="button"
+            class="${artifact.is_active ? "subtle-button" : ""}"
+            data-activate-artifact-id="${escapeHtml(artifact.artifact_id)}"
+            ${artifact.is_active || artifactActivationInFlight ? "disabled" : ""}
+          >
+            ${artifact.is_active ? "Active Model" : "Use This Version"}
+          </button>
+        </div>
+      </article>`)
+      .join("")
+    : `<div class="dataset-count-list"><p class="muted">No trained model artifacts are available yet. Start a training run to populate this list.</p></div>`;
+  datasetSummary.className = "dataset-summary";
+  datasetSummary.innerHTML = `
+    <div class="section-head">
+      <div>
+        <strong>Collected Dataset</strong>
+        <p class="muted">Current counts from <code>training/real_recordings/</code></p>
+      </div>
+      <div class="button-row">
+        <button type="button" id="build-manifest-button">Build Manifest</button>
+        <button type="button" id="start-training-button" ${trainingStatus.status === "running" ? "disabled" : ""}>Start Training</button>
+      </div>
+    </div>
+    <div class="dataset-summary-grid">
+      <div class="dataset-summary-card"><span class="muted">Total Clips</span><strong>${summary.total_recordings}</strong></div>
+      <div class="dataset-summary-card"><span class="muted">Total Duration</span><strong>${formatMilliseconds(summary.total_duration_ms)}</strong></div>
+      <div class="dataset-summary-card"><span class="muted">Manifest</span><strong>${summary.manifest_exists ? "Ready" : "Missing"}</strong></div>
+      <div class="dataset-summary-card"><span class="muted">Manifest Path</span><strong>${escapeHtml(summary.manifest_relative_path)}</strong></div>
+    </div>
+    <div class="dataset-count-grid">
+      <div class="dataset-count-list">
+        <h3>By Label</h3>
+        ${Object.entries(summary.by_label).map(([label, count]) => `<div><dt>${escapeHtml(label)}</dt><dd>${count}</dd></div>`).join("")}
+      </div>
+      <div class="dataset-count-list">
+        <h3>By Split</h3>
+        ${Object.entries(summary.by_split).map(([split, count]) => `<div><dt>${escapeHtml(split)}</dt><dd>${count}</dd></div>`).join("")}
+      </div>
+    </div>
+    <div class="dataset-count-list">
+      <h3>Training Status</h3>
+      <div><dt>Status</dt><dd>${escapeHtml(trainingStatus.status)}</dd></div>
+      <div><dt>Run ID</dt><dd>${escapeHtml(trainingStatus.run_id || "not started")}</dd></div>
+      <div><dt>Epoch</dt><dd>${trainingStatus.current_epoch}/${trainingStatus.epochs}</dd></div>
+      <div><dt>Last Val Acc</dt><dd>${Number(trainingStatus.last_val_accuracy || 0).toFixed(4)}</dd></div>
+      <div><dt>Output</dt><dd>${escapeHtml(trainingStatus.output_relative_path || "n/a")}</dd></div>
+    </div>
+    <div class="artifact-list-section">
+      <div class="section-head">
+        <div>
+          <h3>Model Artifacts</h3>
+          <p class="muted">Switch the active trained model and keep older versions available as inference backups.</p>
+        </div>
+      </div>
+      <div class="artifact-list">${artifactCards}</div>
+    </div>
+    <p class="muted">${summary.manifest_exists ? `Last manifest update: ${formatTimestamp(summary.manifest_updated_at)}.` : "No manifest has been built yet."}</p>`;
+  datasetSummary.querySelector("#build-manifest-button")?.addEventListener("click", () => {
+    void buildDatasetManifest();
+  });
+  datasetSummary.querySelector("#start-training-button")?.addEventListener("click", () => {
+    void startTrainingRun();
+  });
+  datasetSummary.querySelectorAll("[data-activate-artifact-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      void activateModelArtifact(button.dataset.activateArtifactId);
+    });
+  });
+}
+
+async function loadDatasetRecording(recordingId, updateSelection = true) {
+  try {
+    if (updateSelection) currentDatasetRecordingId = recordingId;
+    const response = await fetch(`${API_BASE_URL}/recordings/${encodeURIComponent(recordingId)}`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to load the recording.");
+    currentDatasetRecording = payload;
+    currentDatasetRecordingId = payload.recording_id;
+    renderDatasetDetail(payload);
+    await refreshDatasetManagerSelection();
+  } catch (error) {
+    setEmpty(datasetDetail, "dataset-detail", error.message || "Failed to load the recording.");
+  }
+}
+
+async function refreshDatasetManagerSelection() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/recordings`);
+    const payload = await response.json();
+    if (!response.ok) return;
+    renderDatasetRecordings(payload.recordings || []);
+  } catch {
+    // Leave current dataset UI intact if the refresh fails.
+  }
+}
+
+function renderDatasetDetail(recording) {
+  const audioUrl = `data:audio/wav;base64,${recording.wav_base64}`;
+  datasetDetail.className = "dataset-detail";
+  datasetDetail.innerHTML = `
+    <div>
+      <h3>${escapeHtml(recording.filename)}</h3>
+      <p class="muted">${escapeHtml(recording.relative_path)}</p>
+    </div>
+    <div class="dataset-card-meta">
+      <span class="dataset-meta-chip">${escapeHtml(recording.label)}</span>
+      <span class="dataset-meta-chip">${escapeHtml(recording.split || "unspecified")}</span>
+      <span class="dataset-meta-chip">${recording.sample_rate_hz} Hz</span>
+      <span class="dataset-meta-chip">${formatMilliseconds(recording.duration_ms)}</span>
+    </div>
+    <audio controls preload="metadata" src="${audioUrl}"></audio>
+    <form id="dataset-edit-form" class="dataset-form">
+      <label>
+        <span>Label</span>
+        <select id="dataset-edit-label">
+          ${buildSupportedClassOptions(recording.label)}
+        </select>
+      </label>
+      <label>
+        <span>Dataset Split</span>
+        <select id="dataset-edit-split">
+          <option value="" ${recording.split === "" ? "selected" : ""}>unspecified</option>
+          <option value="train" ${recording.split === "train" ? "selected" : ""}>train</option>
+          <option value="val" ${recording.split === "val" ? "selected" : ""}>val</option>
+          <option value="test" ${recording.split === "test" ? "selected" : ""}>test</option>
+        </select>
+      </label>
+      <div class="button-row">
+        <button type="submit">Save Changes</button>
+        <button type="button" id="dataset-delete-button" class="subtle-button">Delete Clip</button>
+      </div>
+    </form>
+    <p class="muted">Created ${formatTimestamp(recording.created_at)}. Last updated ${formatTimestamp(recording.updated_at)}.</p>`;
+  datasetDetail.querySelector("#dataset-edit-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveDatasetRecordingChanges(recording.recording_id);
+  });
+  datasetDetail.querySelector("#dataset-delete-button")?.addEventListener("click", () => {
+    void deleteDatasetRecording(recording.recording_id);
+  });
+}
+
+function buildSupportedClassOptions(selectedLabel) {
+  return ["speech", "keyboard", "dog_bark", "traffic", "siren", "vacuum", "music"]
+    .map((label) => `<option value="${escapeHtml(label)}" ${label === selectedLabel ? "selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
+}
+
+async function saveDatasetRecordingChanges(recordingId) {
+  const labelNode = datasetDetail.querySelector("#dataset-edit-label");
+  const splitNode = datasetDetail.querySelector("#dataset-edit-split");
+  if (!labelNode || !splitNode) return;
+  try {
+    const response = await fetch(`${API_BASE_URL}/recordings/${encodeURIComponent(recordingId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: labelNode.value, split: splitNode.value }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to update the recording.");
+    await loadDatasetRecording(payload.recording_id, true);
+    await refreshDatasetManager();
+    setRecordingStatus(`Updated training clip to ${payload.relative_path}.`, false);
+  } catch (error) {
+    setRecordingStatus(error.message || "Failed to update the training clip.", true);
+  }
+}
+
+async function deleteDatasetRecording(recordingId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/recordings/${encodeURIComponent(recordingId)}`, {
+      method: "DELETE",
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to delete the recording.");
+    currentDatasetRecordingId = "";
+    currentDatasetRecording = null;
+    setEmpty(datasetDetail, "dataset-detail", "Select a saved training clip to preview and edit it.");
+    await refreshDatasetManager();
+    setRecordingStatus("Deleted the selected training clip.", false);
+  } catch (error) {
+    setRecordingStatus(error.message || "Failed to delete the training clip.", true);
+  }
+}
+
+async function buildDatasetManifest() {
+  try {
+    setRecordingStatus("Building dataset manifest...", false);
+    const response = await fetch(`${API_BASE_URL}/recordings/build-manifest`, {
+      method: "POST",
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to build the manifest.");
+    await refreshDatasetManager();
+    setRecordingStatus(
+      `Built ${payload.manifest_relative_path} with ${payload.total_examples} examples.`,
+      false,
+    );
+  } catch (error) {
+    setRecordingStatus(error.message || "Failed to build the dataset manifest.", true);
+  }
+}
+
+async function startTrainingRun() {
+  try {
+    setRecordingStatus("Starting model training...", false);
+    const response = await fetch(`${API_BASE_URL}/training/run`, {
+      method: "POST",
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to start training.");
+    await refreshDatasetManager();
+    setRecordingStatus(`Training started with run ${payload.run_id}.`, false);
+  } catch (error) {
+    setRecordingStatus(error.message || "Failed to start training.", true);
+  }
+}
+
+async function activateModelArtifact(artifactId) {
+  if (!artifactId || artifactActivationInFlight) return;
+  artifactActivationInFlight = true;
+  try {
+    setRecordingStatus("Activating the selected trained model version...", false);
+    const response = await fetch(`${API_BASE_URL}/artifacts/activate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ artifact_id: artifactId }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to activate the selected model artifact.");
+    await refreshDatasetManager();
+    setRecordingStatus(
+      `Activated ${payload.relative_path}. Older versions remain available as fallback candidates.`,
+      false,
+    );
+  } catch (error) {
+    setRecordingStatus(error.message || "Failed to activate the selected model artifact.", true);
+  } finally {
+    artifactActivationInFlight = false;
+  }
+}
+
+function syncTrainingStatusPolling(status) {
+  if (status === "running") {
+    if (trainingStatusRefreshHandle) return;
+    trainingStatusRefreshHandle = window.setInterval(() => {
+      void refreshDatasetManager();
+    }, 3000);
+    return;
+  }
+  if (trainingStatusRefreshHandle) {
+    window.clearInterval(trainingStatusRefreshHandle);
+    trainingStatusRefreshHandle = null;
+  }
+}
+
 async function loadSavedSession(sessionId) {
   try {
     setStatus("Loading saved session...", false);
@@ -922,6 +1341,7 @@ async function loadSavedSession(sessionId) {
     if (!response.ok) throw new Error(payload.detail || "Failed to load session.");
     currentSessionId = payload.session_id;
     currentFile = buildFileFromBase64(payload.original_audio_base64, payload.filename);
+    currentUploadConversionPromise = null;
     currentRecordedFile = null;
     currentRecordingBlob = null;
     if (recordingPreview) {
@@ -947,5 +1367,10 @@ function buildFileFromBase64(base64Value, filename) {
 
 function settingsDefaultAttenuation() { return "0.20"; }
 function formatSuppressionProfile(profile) { return Object.entries(profile).map(([label, factor]) => `${label}: ${Number(factor).toFixed(2)}`).join(", "); }
+function formatTimestamp(value) {
+  if (!value) return "n/a";
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.getTime()) ? "n/a" : timestamp.toLocaleString();
+}
 
 updateRecordingUiState();

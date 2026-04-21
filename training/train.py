@@ -27,6 +27,27 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    args = parse_args()
+    training_result = train_waveform_model(
+        manifest_path=args.manifest,
+        output_dir=args.output_dir,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        progress_callback=_print_progress_update,
+    )
+    print(f"Saved model artifact to {training_result['output_dir']}")
+
+
+def train_waveform_model(
+    *,
+    manifest_path: str,
+    output_dir: str,
+    epochs: int = 8,
+    batch_size: int = 8,
+    learning_rate: float = 0.001,
+    progress_callback=None,
+) -> dict[str, object]:
     try:
         import torch
         from torch.utils.data import DataLoader, Dataset
@@ -35,8 +56,7 @@ def main() -> None:
             "PyTorch is required for training. Install training/requirements.txt first."
         ) from exc
 
-    args = parse_args()
-    examples = load_manifest(args.manifest)
+    examples = load_manifest(manifest_path)
     train_examples = [example for example in examples if example.split == "train"]
     val_examples = [example for example in examples if example.split == "val"]
     if not train_examples:
@@ -69,20 +89,21 @@ def main() -> None:
 
     train_loader = DataLoader(
         WaveformDataset(train_examples),
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=True,
     )
     val_loader = DataLoader(
         WaveformDataset(val_examples or train_examples),
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         shuffle=False,
     )
 
     model = build_waveform_cnn(class_count=len(class_names))
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     loss_fn = torch.nn.CrossEntropyLoss()
+    epoch_metrics: list[dict[str, float | int]] = []
 
-    for epoch_index in range(args.epochs):
+    for epoch_index in range(epochs):
         model.train()
         running_loss = 0.0
         for waveforms, targets in train_loader:
@@ -94,17 +115,20 @@ def main() -> None:
             running_loss += float(loss.item())
 
         validation_accuracy = evaluate(model, val_loader)
-        print(
-            f"epoch={epoch_index + 1} "
-            f"loss={running_loss / max(1, len(train_loader)):.4f} "
-            f"val_accuracy={validation_accuracy:.4f}"
-        )
+        epoch_result = {
+            "epoch": epoch_index + 1,
+            "loss": running_loss / max(1, len(train_loader)),
+            "val_accuracy": validation_accuracy,
+        }
+        epoch_metrics.append(epoch_result)
+        if progress_callback is not None:
+            progress_callback(epoch_result)
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
     example_input = torch.zeros(1, 1, input_sample_count, dtype=torch.float32)
     scripted_model = torch.jit.trace(model.eval(), example_input)
-    weights_path = output_dir / "model.ts"
+    weights_path = output_dir_path / "model.ts"
     scripted_model.save(str(weights_path))
 
     manifest = {
@@ -120,11 +144,28 @@ def main() -> None:
         "validation_example_count": len(val_examples),
         "class_distribution": dict(Counter(example.label for example in train_examples)),
     }
-    (output_dir / "manifest.json").write_text(
+    (output_dir_path / "manifest.json").write_text(
         json.dumps(manifest, indent=2),
         encoding="utf-8",
     )
-    print(f"Saved model artifact to {output_dir}")
+    return {
+        "output_dir": str(output_dir_path),
+        "weights_path": str(weights_path),
+        "manifest_path": str((output_dir_path / "manifest.json").resolve()),
+        "class_names": class_names,
+        "training_example_count": len(train_examples),
+        "validation_example_count": len(val_examples),
+        "epoch_metrics": epoch_metrics,
+        "final_val_accuracy": epoch_metrics[-1]["val_accuracy"] if epoch_metrics else 0.0,
+    }
+
+
+def _print_progress_update(epoch_result: dict[str, float | int]) -> None:
+    print(
+        f"epoch={epoch_result['epoch']} "
+        f"loss={float(epoch_result['loss']):.4f} "
+        f"val_accuracy={float(epoch_result['val_accuracy']):.4f}"
+    )
 
 
 def evaluate(model, loader) -> float:

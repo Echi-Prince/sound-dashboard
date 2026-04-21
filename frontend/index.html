@@ -9,11 +9,11 @@
   <body>
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">Uploaded Audio Analysis</p>
+        <p class="eyebrow">Audio Analysis</p>
         <h1>Sound Dashboard MVP</h1>
         <p class="lede">
-          Upload a PCM WAV file to inspect preprocessing metadata, classifier detections,
-          and a compact event timeline from the backend pipeline.
+          Upload an audio file or record from the browser mic to inspect preprocessing metadata,
+          classifier detections, and a compact event timeline from the backend pipeline.
         </p>
       </section>
 
@@ -24,8 +24,8 @@
         </div>
         <form id="upload-form" class="upload-form">
           <label class="file-input">
-            <span>Select WAV file</span>
-            <input id="file-input" type="file" accept=".wav,audio/wav" required />
+            <span>Select audio file</span>
+            <input id="file-input" type="file" accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac,.webm" required />
           </label>
           <button id="submit-button" type="submit">Run Analysis</button>
         </form>
@@ -38,7 +38,7 @@
         <div class="section-head">
           <div>
             <h2>Record Audio</h2>
-            <p class="muted">Capture from the browser mic, analyze it, and optionally save labeled WAV clips into the training dataset.</p>
+            <p class="muted">Capture from the browser mic, analyze it, and optionally save labeled compatible WAV clips into the training dataset.</p>
           </div>
         </div>
         <div class="recording-grid">
@@ -88,6 +88,18 @@
           <p class="muted">Reload saved analysis and suppression previews from the backend.</p>
         </div>
         <div id="recent-sessions" class="session-list empty-state">No saved sessions yet.</div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Dataset Manager</h2>
+          <p class="muted">Review clips saved in <code>training/real_recordings/</code>, preview them, and correct label or split mistakes.</p>
+        </div>
+        <div id="dataset-summary" class="dataset-summary empty-state">Loading dataset summary...</div>
+        <div class="dataset-grid">
+          <div id="dataset-recordings" class="session-list empty-state">No saved training clips yet.</div>
+          <div id="dataset-detail" class="dataset-detail empty-state">Select a saved training clip to preview and edit it.</div>
+        </div>
       </section>
 
       <section class="results-grid">
@@ -146,7 +158,7 @@
           <p class="muted">Review the uploaded clip and jump directly to detected spans.</p>
         </div>
         <div id="playback-panel" class="playback-panel empty-state">
-          Upload a WAV file to enable playback controls.
+          Upload or record audio to enable playback controls.
         </div>
       </section>
 

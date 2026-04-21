@@ -5,7 +5,7 @@ This repository now includes planning documents plus a working sound analysis da
 Current focus:
 1. Support both uploaded-audio analysis and browser-recorded capture.
 2. Build a backend API for detection and suppression workflows.
-3. Keep improving the trained-model path, saved review workflow, and training-data collection.
+3. Keep improving the trained-model path, saved review workflow, training-data collection, and model version management.
 4. Improve suppression quality beyond the current prototype attenuation path.
 
 Repository Structure
@@ -33,7 +33,19 @@ The current backend scaffold provides:
 6. `GET /sessions/{session_id}`
    - Returns a saved session with the original audio payload, analysis response, and any saved processed preview.
 7. `POST /recordings`
-   - Accepts a PCM WAV file plus label metadata, validates it against the supported classes, and saves it into `training/real_recordings/` for future manifest generation and retraining.
+   - Accepts a compatible WAV file plus label metadata, validates it against the supported classes, and saves it into `training/real_recordings/` for future manifest generation and retraining.
+8. `GET /recordings/summary`
+   - Returns clip counts, split counts, duration totals, and manifest status for the collected real-recordings dataset.
+9. `POST /recordings/build-manifest`
+   - Builds `training/real_recordings/manifest.jsonl` from the current labeled WAV collection.
+10. `GET /training/status`
+   - Returns the latest training-run state, including run ID, epoch progress, and the output artifact path.
+11. `POST /training/run`
+   - Starts a background training run from the current real-recordings manifest and archives the exported artifact into `training/artifacts/versions/`.
+12. `GET /artifacts`
+   - Lists the trained model artifacts that can be used for inference, including archived versions and the current active selection.
+13. `POST /artifacts/activate`
+   - Switches the active trained model manifest while leaving older versions available as fallback candidates.
 
 The current analysis route is still an MVP, but it now performs real WAV decoding, preprocessing, model-ready spectral feature generation, and baseline classifier scoring over the configured sound classes.
 The spectral extraction path is `numpy`-accelerated when available, with a pure-Python fallback kept in place for minimal environments.
@@ -42,7 +54,7 @@ Suggested Next Implementation Steps
 1. Collect more labeled WAV clips, including browser-recorded captures, and train the next `training/` artifact.
 2. Retrain and calibrate class thresholds against the real dataset.
 3. Improve suppression quality beyond span attenuation.
-4. Add broader tests for model inference and API integration behavior.
+4. Add broader tests for model inference, artifact promotion/rollback, and API integration behavior.
 5. Expand saved-session management beyond the current recent-session list.
 
 Running the Backend
@@ -105,18 +117,23 @@ Run Both
 
 Notes
 1. This repo now contains a trained TorchScript artifact built from the current real-data manifest, but its quality still depends on the size and quality of the labeled recordings.
-2. The frontend now supports both file upload and in-browser microphone capture, but backend ingestion still expects PCM WAV payloads.
-3. The backend is now configured to load `training/artifacts/real-v1/manifest.json` by default, and will fall back to the baseline classifier if that artifact cannot be loaded or if the trained model returns no classes for a clip.
-4. Analysis metadata now includes preprocessing details such as target sample rate, sample count after resampling, and normalization gain.
-5. The analysis response also includes compact log-mel spectrogram summary statistics for model-ready feature inspection.
-6. `backend/requirements.txt` now includes `numpy` so realistic audio lengths remain fast enough for local analysis.
-7. Local CORS is enabled for `http://127.0.0.1:3000` and `http://localhost:3000` so the static frontend can call the backend during development.
-8. `POST /process` is a prototype suppression path that currently attenuates detected class spans rather than doing true source separation.
-9. `training/` now contains an offline waveform-classifier training scaffold that exports a TorchScript model and JSON manifest for backend loading.
-10. `training/generate_synthetic_dataset.py` can create a local starter WAV dataset and manifest so the training/export path can be exercised before real labeled data is available.
-11. The dashboard now persists recent sessions in `backend/data/sessions/` so earlier analyses and processed previews can be reloaded from the frontend.
-12. Analysis responses now expose `classifier_source` and `used_fallback` so the frontend can show whether detections came from the trained model or the baseline safety net.
-13. The baseline heuristic was retuned so the current keyboard sample set ranks `keyboard` ahead of obvious false positives more reliably.
-14. `training/build_real_manifest.py` and `training/real_recordings/README.md` now provide the handoff path for real labeled WAV collection and retraining, and `POST /recordings` can now populate that folder directly from the browser workflow.
-15. The frontend recording panel can capture microphone audio, convert it to WAV in-browser, analyze it through the same backend flow, and save labeled clips into the training set.
-16. Root-level launch scripts are included: `start-backend`, `start-frontend`, and `start-dev`.
+2. The frontend now supports both file upload and in-browser microphone capture, and selected browser audio files are converted to compatible PCM WAV payloads before backend ingestion.
+3. Browser-recorded clips are also converted to WAV in-browser before analysis or training ingest, so the backend only needs to handle one compatible file format.
+4. The backend is now configured to load `training/artifacts/real-v1/manifest.json` by default, but can also switch to archived manifests stored under `training/artifacts/versions/`.
+5. The active trained artifact is tracked in `training/artifacts/active-model.json`.
+6. Older archived manifests remain available as backup inference candidates if the active trained model returns no classes.
+7. Completed training runs now archive exported artifacts into `training/artifacts/versions/<run_id>/` and automatically promote the new manifest to active status.
+8. Analysis metadata now includes preprocessing details such as target sample rate, sample count after resampling, and normalization gain.
+9. The analysis response also includes compact log-mel spectrogram summary statistics for model-ready feature inspection.
+10. `backend/requirements.txt` now includes `numpy` so realistic audio lengths remain fast enough for local analysis.
+11. Local CORS is enabled for `http://127.0.0.1:3000` and `http://localhost:3000` so the static frontend can call the backend during development.
+12. `POST /process` is a prototype suppression path that currently attenuates detected class spans rather than doing true source separation.
+13. `training/` now contains an offline waveform-classifier training scaffold that exports a TorchScript model and JSON manifest for backend loading.
+14. `training/generate_synthetic_dataset.py` can create a local starter WAV dataset and manifest so the training/export path can be exercised before real labeled data is available.
+15. The dashboard now persists recent sessions in `backend/data/sessions/` so earlier analyses and processed previews can be reloaded from the frontend.
+16. Analysis responses now expose `classifier_source` and `used_fallback` so the frontend can show whether detections came from the trained model, an archived backup model, or the baseline safety net.
+17. The dataset manager now exposes manifest generation, training status, artifact history, and active-model switching from the site itself.
+18. The baseline heuristic was retuned so the current keyboard sample set ranks `keyboard` ahead of obvious false positives more reliably.
+19. `training/build_real_manifest.py` and `training/real_recordings/README.md` now provide the handoff path for real labeled WAV collection and retraining, and `POST /recordings` can now populate that folder directly from the browser workflow.
+20. The frontend recording panel can capture microphone audio, convert it to WAV in-browser, analyze it through the same backend flow, and save labeled clips into the training set.
+21. Root-level launch scripts are included: `start-backend`, `start-frontend`, and `start-dev`.

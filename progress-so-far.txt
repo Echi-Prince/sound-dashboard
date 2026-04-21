@@ -5,6 +5,7 @@ Latest Local Milestone
 2. Added backend recording-ingest support so labeled browser captures can be saved into `training/real_recordings/`.
 3. Kept the recorded-audio path compatible with the existing analyze, session, and suppression preview flows.
 4. Added backend tests for recording ingestion and kept the existing backend suite green.
+5. Added dataset-manager controls for manifest building, background training runs, archived artifacts, and active-model switching with older versions kept as backup candidates.
 
 Repository Setup
 1. Git was installed on the machine.
@@ -47,6 +48,8 @@ Backend API Progress
 7. Added `POST /recordings`
    - Accepts a WAV file plus label metadata.
    - Saves validated recordings into `training/real_recordings/<split>/<label>/` or `training/real_recordings/<label>/`.
+8. Added `GET /recordings/summary`, `POST /recordings/build-manifest`, `GET /training/status`, `POST /training/run`, `GET /artifacts`, and `POST /artifacts/activate`
+   - Exposes dataset health, manifest creation, asynchronous training progress, archived artifact listing, and active-model switching.
 
 Audio Processing Progress
 1. Added PCM WAV decoding support.
@@ -145,6 +148,9 @@ Current State of the Prototype
 17. Empty trained-model results now degrade to the baseline safety net instead of leaving the frontend with no suppressible classes.
 18. The baseline scorer now ranks the current keyboard sample as `keyboard` first.
 19. Browser-recorded clips can now be saved directly into the real-data collection folder for later manifest generation and retraining.
+20. Uploaded audio files are now converted to compatible `.wav` payloads in the browser before analysis or suppression requests are sent.
+21. Completed training runs are now archived into versioned artifact folders and promoted through an active-model pointer instead of overwriting the only trained artifact path.
+22. Older trained manifests remain available as backup inference candidates if the active model returns no classes.
 
 Verification Completed
 1. The backend source files were checked with Python compilation:
@@ -209,8 +215,8 @@ What Is Still Missing
 2. Retraining and threshold tuning based on validation results from real recordings.
 3. A more realistic suppression method than simple class-span attenuation.
 4. A more polished suppression UX with tighter synchronization, clearer comparison feedback, and persistent settings.
-5. Expanded test coverage for actual model inference and higher-level API integration cases.
-6. Better real-data model quality so the trained path can replace the heuristic fallback more often.
+5. Expanded test coverage for artifact rollback/promotion, actual model inference, and higher-level API integration cases.
+6. Better real-data model quality so the trained path can replace the backup chain and heuristic fallback more often.
 
 Recommended Next Step
-The next best implementation step is to use the new recording flow or manual collection to place more real WAV clips into `training/real_recordings/`, run `training.build_real_manifest`, retrain into a new artifact directory, and then calibrate class thresholds so the trained backend starts producing useful detections.
+The next best implementation step is to collect more real WAV clips per class, rebuild the manifest from the dashboard, retrain into fresh archived artifacts, and then calibrate thresholds so the active trained backend stops depending on backup models or the heuristic baseline for common clips.

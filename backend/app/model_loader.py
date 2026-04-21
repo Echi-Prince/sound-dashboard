@@ -112,6 +112,13 @@ class PredictionResult:
 
 
 @dataclass
+class TrainedPredictorEntry:
+    name: str
+    predictor: Any
+    manifest: ModelArtifactManifest
+
+
+@dataclass
 class InferenceBackend:
     name: str
     predictor: Any
@@ -120,6 +127,7 @@ class InferenceBackend:
     fallback_reason: str = ""
     confidence_threshold: float = 0.45
     class_confidence_thresholds: dict[str, float] | None = None
+    trained_predictors: list[TrainedPredictorEntry] | None = None
 
     def predict(
         self,
@@ -142,22 +150,32 @@ class InferenceBackend:
         features: ComputedFeatures,
         spectral_features: SpectralFeatures,
     ) -> PredictionResult:
-        if (
-            isinstance(self.predictor, TorchscriptWaveformClassifier)
-            and self.manifest is not None
-            and sample_rate_hz == self.manifest.sample_rate_hz
-        ):
-            predictions = apply_prediction_thresholds(
-                predictions=self.predictor.predict_ranked(samples),
-                default_threshold=self.confidence_threshold,
-                class_confidence_thresholds=self.class_confidence_thresholds,
-            )
-            if predictions or self.fallback_predictor is None:
-                return PredictionResult(
-                    predictions=predictions,
-                    source_name=self.name,
-                    used_fallback=False,
+        trained_candidates = self.trained_predictors or []
+        if not trained_candidates and self.manifest is not None:
+            trained_candidates = [
+                TrainedPredictorEntry(
+                    name=self.name,
+                    predictor=self.predictor,
+                    manifest=self.manifest,
                 )
+            ]
+
+        for candidate_index, candidate in enumerate(trained_candidates):
+            if (
+                isinstance(candidate.predictor, TorchscriptWaveformClassifier)
+                and sample_rate_hz == candidate.manifest.sample_rate_hz
+            ):
+                predictions = apply_prediction_thresholds(
+                    predictions=candidate.predictor.predict_ranked(samples),
+                    default_threshold=self.confidence_threshold,
+                    class_confidence_thresholds=self.class_confidence_thresholds,
+                )
+                if predictions:
+                    return PredictionResult(
+                        predictions=predictions,
+                        source_name=candidate.name,
+                        used_fallback=candidate_index > 0,
+                    )
 
         predictor = self.fallback_predictor or self.predictor
         if hasattr(predictor, "predict_ranked"):
@@ -193,7 +211,7 @@ def build_inference_backend(
     confidence_threshold: float,
     class_confidence_thresholds: dict[str, float] | None,
     baseline_name: str,
-    manifest_path: str,
+    manifest_paths: list[str] | None = None,
 ) -> InferenceBackend:
     baseline = BaselineSoundClassifier(
         supported_classes=supported_classes,
@@ -201,8 +219,26 @@ def build_inference_backend(
         class_confidence_thresholds=class_confidence_thresholds,
     )
 
-    manifest = load_model_manifest(manifest_path)
-    if manifest is None:
+    trained_predictors: list[TrainedPredictorEntry] = []
+    for manifest_path in manifest_paths or []:
+        manifest = load_model_manifest(manifest_path)
+        if manifest is None:
+            continue
+
+        try:
+            predictor = TorchscriptWaveformClassifier(manifest=manifest)
+        except (OSError, RuntimeError, ValueError):
+            continue
+
+        trained_predictors.append(
+            TrainedPredictorEntry(
+                name=_build_predictor_name(manifest, manifest_path),
+                predictor=predictor,
+                manifest=manifest,
+            )
+        )
+
+    if not trained_predictors:
         return InferenceBackend(
             name=baseline_name,
             predictor=baseline,
@@ -210,24 +246,18 @@ def build_inference_backend(
             class_confidence_thresholds=class_confidence_thresholds,
         )
 
-    try:
-        predictor = TorchscriptWaveformClassifier(manifest=manifest)
-    except (OSError, RuntimeError, ValueError):
-        return InferenceBackend(
-            name=baseline_name,
-            predictor=baseline,
-            fallback_predictor=baseline,
-            manifest=manifest,
-            fallback_reason="trained model artifact could not be loaded",
-            confidence_threshold=confidence_threshold,
-            class_confidence_thresholds=class_confidence_thresholds,
-        )
-
+    primary_predictor = trained_predictors[0]
     return InferenceBackend(
-        name=f"trained_model:{manifest.model_name}",
-        predictor=predictor,
+        name=primary_predictor.name,
+        predictor=primary_predictor.predictor,
         fallback_predictor=baseline,
-        manifest=manifest,
+        manifest=primary_predictor.manifest,
         confidence_threshold=confidence_threshold,
         class_confidence_thresholds=class_confidence_thresholds,
+        trained_predictors=trained_predictors,
     )
+
+
+def _build_predictor_name(manifest: ModelArtifactManifest, manifest_path: str) -> str:
+    manifest_parent = Path(manifest_path).resolve().parent.name
+    return f"trained_model:{manifest.model_name}:{manifest_parent}"

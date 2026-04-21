@@ -10,6 +10,7 @@ import wave
 from pathlib import Path
 from uuid import uuid4
 import shutil
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from fastapi import UploadFile
@@ -24,22 +25,34 @@ from backend.app.config import settings
 from backend.app.model_loader import (
     InferenceBackend,
     ModelArtifactManifest,
+    TrainedPredictorEntry,
     TorchscriptWaveformClassifier,
     build_inference_backend,
     load_model_manifest,
     prepare_waveform_input,
 )
+from backend.app.inference_manager import clear_inference_backend_cache
 from backend.app.main import (
     _filter_merged_detections,
+    activate_artifact,
     analyze_audio,
     build_windowed_detections,
+    build_recordings_manifest,
+    delete_recording,
+    get_artifacts,
+    get_recording,
+    get_recordings,
+    get_recordings_summary,
     get_session,
     get_sessions,
     health,
-    inference_backend,
     save_recording,
+    get_training_run_status,
+    start_training,
+    update_recording,
     process_audio,
 )
+from backend.app.schemas import ActivateArtifactRequest, RecordingUpdateRequest
 from backend.app.model_loader import PredictionResult
 
 
@@ -248,7 +261,7 @@ class AudioPipelineTests(unittest.TestCase):
             confidence_threshold=settings.classifier_confidence_threshold,
             class_confidence_thresholds=settings.class_confidence_thresholds,
             baseline_name=settings.classifier_name,
-            manifest_path="",
+            manifest_paths=[],
         )
 
         self.assertEqual(backend.name, settings.classifier_name)
@@ -304,6 +317,77 @@ class AudioPipelineTests(unittest.TestCase):
         self.assertEqual(len(prediction_result.predictions), 1)
         self.assertEqual(prediction_result.source_name, "baseline_rules_v1")
         self.assertTrue(prediction_result.used_fallback)
+
+    def test_inference_backend_uses_backup_trained_predictor_before_baseline(self) -> None:
+        class EmptyTorchscriptClassifier(TorchscriptWaveformClassifier):
+            def __init__(self, manifest: ModelArtifactManifest) -> None:
+                self.manifest = manifest
+
+            def predict(self, samples: list[float]) -> list:
+                return []
+
+            def predict_ranked(self, samples: list[float]) -> list:
+                return []
+
+        class BackupTorchscriptClassifier(TorchscriptWaveformClassifier):
+            def __init__(self, manifest: ModelArtifactManifest) -> None:
+                self.manifest = manifest
+
+            def predict(self, samples: list[float]) -> list:
+                return [ClassPrediction(label="speech", confidence=0.88)]
+
+            def predict_ranked(self, samples: list[float]) -> list:
+                return [ClassPrediction(label="speech", confidence=0.88)]
+
+        manifest = ModelArtifactManifest(
+            model_name="waveform_cnn_v1",
+            model_type="torchscript_waveform_cnn",
+            class_names=settings.supported_classes,
+            sample_rate_hz=settings.sample_rate_hz,
+            input_sample_count=settings.sample_rate_hz,
+            confidence_threshold=0.45,
+            weights_path="training/artifacts/real-v1/model.ts",
+            normalization_target_peak=0.95,
+        )
+        backend = InferenceBackend(
+            name="trained_model:waveform_cnn_v1:primary",
+            predictor=EmptyTorchscriptClassifier(manifest),
+            fallback_predictor=BaselineSoundClassifier(
+                supported_classes=settings.supported_classes,
+                confidence_threshold=settings.classifier_confidence_threshold,
+            ),
+            manifest=manifest,
+            confidence_threshold=0.45,
+            class_confidence_thresholds=settings.class_confidence_thresholds,
+            trained_predictors=[
+                TrainedPredictorEntry(
+                    name="trained_model:waveform_cnn_v1:primary",
+                    predictor=EmptyTorchscriptClassifier(manifest),
+                    manifest=manifest,
+                ),
+                TrainedPredictorEntry(
+                    name="trained_model:waveform_cnn_v1:backup",
+                    predictor=BackupTorchscriptClassifier(manifest),
+                    manifest=manifest,
+                ),
+            ],
+        )
+        samples = [0.0, 0.3, -0.1, 0.5, -0.4, 0.2] * 2667
+        from backend.app.audio import extract_features
+
+        features = extract_features(samples=samples, sample_rate_hz=16000)
+        spectral = extract_log_mel_features(samples=samples, sample_rate_hz=16000)
+
+        prediction_result = backend.predict_with_metadata(
+            samples=samples,
+            sample_rate_hz=16000,
+            features=features,
+            spectral_features=spectral,
+        )
+
+        self.assertEqual(prediction_result.source_name, "trained_model:waveform_cnn_v1:backup")
+        self.assertTrue(prediction_result.used_fallback)
+        self.assertEqual(len(prediction_result.predictions), 1)
 
     def test_build_windowed_detections_merges_overlapping_chunk_predictions(self) -> None:
         class FakeWindowClassifier:
@@ -395,16 +479,39 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
         self._temp_dir.mkdir()
         self._recordings_dir = temp_root / f"real-recordings-{uuid4().hex}"
         self._recordings_dir.mkdir()
+        self._manifest_path = self._recordings_dir / "manifest.jsonl"
+        self._training_runs_dir = temp_root / f"training-runs-{uuid4().hex}"
+        self._training_runs_dir.mkdir()
+        self._training_versions_dir = temp_root / f"training-versions-{uuid4().hex}"
+        self._training_versions_dir.mkdir()
+        self._active_model_state_path = temp_root / f"active-model-{uuid4().hex}.json"
         self._original_session_store_dir = settings.session_store_dir
         self._original_real_recordings_dir = settings.real_recordings_dir
+        self._original_real_recordings_manifest_path = settings.real_recordings_manifest_path
+        self._original_training_runs_dir = settings.training_runs_dir
+        self._original_training_versions_dir = settings.training_versions_dir
+        self._original_active_model_state_path = settings.active_model_state_path
         settings.session_store_dir = str(self._temp_dir)
         settings.real_recordings_dir = str(self._recordings_dir)
+        settings.real_recordings_manifest_path = str(self._manifest_path)
+        settings.training_runs_dir = str(self._training_runs_dir)
+        settings.training_versions_dir = str(self._training_versions_dir)
+        settings.active_model_state_path = str(self._active_model_state_path)
 
     def tearDown(self) -> None:
+        clear_inference_backend_cache()
         settings.session_store_dir = self._original_session_store_dir
         settings.real_recordings_dir = self._original_real_recordings_dir
+        settings.real_recordings_manifest_path = self._original_real_recordings_manifest_path
+        settings.training_runs_dir = self._original_training_runs_dir
+        settings.training_versions_dir = self._original_training_versions_dir
+        settings.active_model_state_path = self._original_active_model_state_path
         shutil.rmtree(self._temp_dir, ignore_errors=True)
         shutil.rmtree(self._recordings_dir, ignore_errors=True)
+        shutil.rmtree(self._training_runs_dir, ignore_errors=True)
+        shutil.rmtree(self._training_versions_dir, ignore_errors=True)
+        if self._active_model_state_path.exists():
+            self._active_model_state_path.unlink()
         super().tearDown()
 
     async def test_health_route_returns_ok(self) -> None:
@@ -419,7 +526,7 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
 
         response = await analyze_audio(file=upload)
 
-        self.assertEqual(response.status, inference_backend.name)
+        self.assertTrue(response.status)
         self.assertTrue(response.session_id)
         self.assertTrue(response.classifier_source)
         self.assertIsInstance(response.used_fallback, bool)
@@ -605,6 +712,179 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 400)
         self.assertIn("supported classes", context.exception.detail.lower())
+
+    async def test_recording_manager_lists_loads_updates_and_deletes_saved_recording(self) -> None:
+        saved_recording = await save_recording(
+            file=UploadFile(
+                filename="recorded.wav",
+                file=io.BytesIO(build_test_wav_bytes(duration_seconds=0.25)),
+            ),
+            label="speech",
+            split="",
+            source_name="browser mic",
+        )
+
+        recording_list = await get_recordings()
+        self.assertEqual(len(recording_list.recordings), 1)
+        self.assertEqual(recording_list.recordings[0].recording_id, saved_recording.recording_id)
+
+        recording_detail = await get_recording(saved_recording.recording_id)
+        self.assertEqual(recording_detail.label, "speech")
+        self.assertTrue(recording_detail.wav_base64)
+
+        updated_recording = await update_recording(
+            saved_recording.recording_id,
+            RecordingUpdateRequest(label="keyboard", split="val"),
+        )
+        self.assertEqual(updated_recording.label, "keyboard")
+        self.assertEqual(updated_recording.split, "val")
+        self.assertTrue(updated_recording.relative_path.endswith(f"val/keyboard/{updated_recording.filename}"))
+        self.assertTrue((Path(settings.real_recordings_dir) / "val" / "keyboard" / updated_recording.filename).exists())
+
+        delete_response = await delete_recording(updated_recording.recording_id)
+        self.assertEqual(delete_response["status"], "deleted")
+        self.assertEqual((await get_recordings()).recordings, [])
+
+        with self.assertRaises(HTTPException) as context:
+            await get_recording(updated_recording.recording_id)
+
+        self.assertEqual(context.exception.status_code, 404)
+
+    async def test_recordings_summary_and_manifest_build_reflect_saved_dataset(self) -> None:
+        await save_recording(
+            file=UploadFile(
+                filename="speech.wav",
+                file=io.BytesIO(build_test_wav_bytes(duration_seconds=0.25)),
+            ),
+            label="speech",
+            split="train",
+            source_name="browser",
+        )
+        await save_recording(
+            file=UploadFile(
+                filename="keyboard.wav",
+                file=io.BytesIO(build_test_wav_bytes(duration_seconds=0.5, frequency_hz=880.0)),
+            ),
+            label="keyboard",
+            split="val",
+            source_name="browser",
+        )
+
+        summary = await get_recordings_summary()
+        self.assertEqual(summary.total_recordings, 2)
+        self.assertEqual(summary.by_label["speech"], 1)
+        self.assertEqual(summary.by_label["keyboard"], 1)
+        self.assertEqual(summary.by_split["train"], 1)
+        self.assertEqual(summary.by_split["val"], 1)
+        self.assertFalse(summary.manifest_exists)
+
+        build_result = await build_recordings_manifest()
+        self.assertEqual(build_result.total_examples, 2)
+        self.assertEqual(build_result.by_split, {"train": 1, "val": 1})
+        self.assertEqual(build_result.by_label, {"speech": 1, "keyboard": 1})
+        self.assertTrue(self._manifest_path.exists())
+        self.assertIn('"label": "speech"', self._manifest_path.read_text(encoding="utf-8"))
+
+        refreshed_summary = await get_recordings_summary()
+        self.assertTrue(refreshed_summary.manifest_exists)
+        self.assertTrue(refreshed_summary.manifest_relative_path.endswith("manifest.jsonl"))
+
+    async def test_training_status_and_run_routes_use_manager_contract(self) -> None:
+        idle_status = {
+            "status": "idle",
+            "run_id": "",
+            "started_at": "",
+            "finished_at": "",
+            "manifest_relative_path": "training/real_recordings/manifest.jsonl",
+            "output_relative_path": "training/artifacts/latest-auto",
+            "epochs": 8,
+            "batch_size": 8,
+            "learning_rate": 0.001,
+            "current_epoch": 0,
+            "last_loss": 0.0,
+            "last_val_accuracy": 0.0,
+            "final_val_accuracy": 0.0,
+            "message": "Training has not started yet.",
+            "error": "",
+        }
+        running_status = {
+            **idle_status,
+            "status": "running",
+            "run_id": "20260421T120000Z",
+            "started_at": "2026-04-21T12:00:00+00:00",
+            "message": "Training started.",
+        }
+
+        with patch("backend.app.main.get_training_status", return_value=idle_status):
+            status_response = await get_training_run_status()
+        self.assertEqual(status_response.status, "idle")
+        self.assertEqual(status_response.output_relative_path, "training/artifacts/latest-auto")
+
+        with patch("backend.app.main.start_training_run", return_value=running_status):
+            start_response = await start_training()
+        self.assertEqual(start_response.status, "running")
+        self.assertEqual(start_response.run_id, "20260421T120000Z")
+
+    async def test_training_run_route_translates_missing_manifest_and_conflict_errors(self) -> None:
+        with patch("backend.app.main.start_training_run", side_effect=ValueError("Build the real-recordings manifest before starting training.")):
+            with self.assertRaises(HTTPException) as missing_manifest_context:
+                await start_training()
+        self.assertEqual(missing_manifest_context.exception.status_code, 400)
+
+        with patch("backend.app.main.start_training_run", side_effect=RuntimeError("A training run is already in progress.")):
+            with self.assertRaises(HTTPException) as conflict_context:
+                await start_training()
+        self.assertEqual(conflict_context.exception.status_code, 409)
+
+    async def test_artifact_manager_lists_and_activates_artifacts(self) -> None:
+        primary_dir = Path(settings.training_versions_dir) / "20260421T184442Z"
+        backup_dir = Path(settings.training_versions_dir) / "20260401T120000Z"
+        primary_dir.mkdir(parents=True)
+        backup_dir.mkdir(parents=True)
+
+        primary_manifest = primary_dir / "manifest.json"
+        backup_manifest = backup_dir / "manifest.json"
+        (primary_dir / "model.ts").write_bytes(b"primary-model")
+        (backup_dir / "model.ts").write_bytes(b"backup-model")
+        primary_manifest.write_text(
+            json.dumps(
+                {
+                    "model_name": "waveform_cnn_v1",
+                    "class_names": ["speech", "keyboard"],
+                    "weights_path": "model.ts",
+                    "training_example_count": 23,
+                    "validation_example_count": 6,
+                }
+            ),
+            encoding="utf-8",
+        )
+        backup_manifest.write_text(
+            json.dumps(
+                {
+                    "model_name": "waveform_cnn_v1",
+                    "class_names": ["speech", "keyboard"],
+                    "weights_path": "model.ts",
+                    "training_example_count": 12,
+                    "validation_example_count": 4,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        artifact_list = await get_artifacts()
+        self.assertGreaterEqual(len(artifact_list.artifacts), 2)
+
+        target_artifact = next(
+            artifact for artifact in artifact_list.artifacts
+            if artifact.relative_path.endswith("20260401T120000Z/manifest.json")
+        )
+        activation_response = await activate_artifact(
+            ActivateArtifactRequest(artifact_id=target_artifact.artifact_id)
+        )
+        self.assertTrue(activation_response.is_active)
+        self.assertTrue(self._active_model_state_path.exists())
+        active_state = json.loads(self._active_model_state_path.read_text(encoding="utf-8"))
+        self.assertTrue(active_state["active_manifest_path"].endswith("20260401T120000Z\\manifest.json"))
 
 
 if __name__ == "__main__":

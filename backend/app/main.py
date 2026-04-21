@@ -15,24 +15,43 @@ from .audio import (
     preprocess_audio,
     suppress_detected_classes,
 )
+from .artifact_manager import activate_model_artifact, list_model_artifacts
 from .classifier import build_classifier_detections
 from .config import settings
-from .model_loader import PredictionResult, build_inference_backend
-from .recording_store import save_training_recording
+from .dataset_manager import build_real_recordings_manifest, get_dataset_summary
+from .inference_manager import clear_inference_backend_cache, get_inference_backend
+from .model_loader import PredictionResult
+from .recording_store import (
+    delete_training_recording,
+    list_training_recordings,
+    load_training_recording,
+    save_training_recording,
+    update_training_recording,
+)
 from .session_store import create_analysis_session, list_sessions, load_session, update_processed_session
 from .schemas import (
     AnalysisResponse,
+    ActivateArtifactRequest,
+    ActivateArtifactResponse,
+    ArtifactListResponse,
     AudioFeatures,
     AudioMetadata,
+    BuildManifestResponse,
+    DatasetSummaryResponse,
     DetectionResult,
     HealthResponse,
     ProcessResponse,
     ProcessedAudio,
+    RecordingDetailResponse,
+    RecordingListResponse,
+    RecordingUpdateRequest,
     SavedRecordingResponse,
     SessionDetailResponse,
     SessionListResponse,
     SpectralFeatures,
+    TrainingStatusResponse,
 )
+from .training_manager import get_training_status, start_training_run
 
 
 app = FastAPI(
@@ -50,15 +69,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-inference_backend = build_inference_backend(
-    supported_classes=settings.supported_classes,
-    confidence_threshold=settings.classifier_confidence_threshold,
-    class_confidence_thresholds=settings.class_confidence_thresholds,
-    baseline_name=settings.classifier_name,
-    manifest_path=settings.trained_model_manifest_path,
-)
-
 
 @dataclass
 class PreparedAnalysis:
@@ -81,6 +91,25 @@ async def health() -> HealthResponse:
 @app.get("/config")
 async def config() -> dict:
     return settings.model_dump()
+
+
+@app.get("/artifacts", response_model=ArtifactListResponse)
+async def get_artifacts() -> ArtifactListResponse:
+    return ArtifactListResponse(artifacts=list_model_artifacts())
+
+
+@app.post("/artifacts/activate", response_model=ActivateArtifactResponse)
+async def activate_artifact(request: ActivateArtifactRequest) -> ActivateArtifactResponse:
+    try:
+        artifact = activate_model_artifact(request.artifact_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found.") from exc
+
+    clear_inference_backend_cache()
+    return ActivateArtifactResponse(
+        **artifact,
+        message="Activated the selected trained model artifact.",
+    )
 
 
 @app.get("/sessions", response_model=SessionListResponse)
@@ -128,9 +157,19 @@ async def save_recording(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return SavedRecordingResponse(
-        **saved_recording,
-        duration_ms=decoded_audio.duration_ms,
-        sample_rate_hz=decoded_audio.sample_rate_hz,
+        **{
+            key: saved_recording[key]
+            for key in (
+                "recording_id",
+                "label",
+                "split",
+                "filename",
+                "relative_path",
+                "byte_count",
+                "duration_ms",
+                "sample_rate_hz",
+            )
+        },
         message=(
             "Saved the WAV recording into the training real_recordings directory for "
             "future manifest generation and retraining."
@@ -138,8 +177,102 @@ async def save_recording(
     )
 
 
+@app.get("/recordings", response_model=RecordingListResponse)
+async def get_recordings() -> RecordingListResponse:
+    return RecordingListResponse(recordings=list_training_recordings())
+
+
+@app.get("/recordings/summary", response_model=DatasetSummaryResponse)
+async def get_recordings_summary() -> DatasetSummaryResponse:
+    return DatasetSummaryResponse(**get_dataset_summary())
+
+
+@app.get("/recordings/{recording_id}", response_model=RecordingDetailResponse)
+async def get_recording(recording_id: str) -> RecordingDetailResponse:
+    try:
+        recording = load_training_recording(recording_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Recording not found.") from exc
+    return RecordingDetailResponse(**recording)
+
+
+@app.patch("/recordings/{recording_id}", response_model=SavedRecordingResponse)
+async def update_recording(
+    recording_id: str,
+    update: RecordingUpdateRequest,
+) -> SavedRecordingResponse:
+    try:
+        updated_recording = update_training_recording(
+            recording_id=recording_id,
+            label=update.label,
+            split=update.split,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Recording not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return SavedRecordingResponse(
+        **{
+            key: updated_recording[key]
+            for key in (
+                "recording_id",
+                "label",
+                "split",
+                "filename",
+                "relative_path",
+                "byte_count",
+                "duration_ms",
+                "sample_rate_hz",
+            )
+        },
+        message="Updated the recording label and dataset split.",
+    )
+
+
+@app.delete("/recordings/{recording_id}")
+async def delete_recording(recording_id: str) -> dict[str, str]:
+    try:
+        delete_training_recording(recording_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Recording not found.") from exc
+    return {"status": "deleted"}
+
+
+@app.post("/recordings/build-manifest", response_model=BuildManifestResponse)
+async def build_recordings_manifest() -> BuildManifestResponse:
+    try:
+        build_result = build_real_recordings_manifest()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Recordings directory not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return BuildManifestResponse(
+        **build_result,
+        message="Built a manifest from the current real_recordings dataset.",
+    )
+
+
+@app.get("/training/status", response_model=TrainingStatusResponse)
+async def get_training_run_status() -> TrainingStatusResponse:
+    return TrainingStatusResponse(**get_training_status())
+
+
+@app.post("/training/run", response_model=TrainingStatusResponse)
+async def start_training() -> TrainingStatusResponse:
+    try:
+        training_state = start_training_run()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return TrainingStatusResponse(**training_state)
+
+
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_audio(file: UploadFile = File(...)) -> AnalysisResponse:
+    inference_backend = get_inference_backend()
     prepared = await _prepare_analysis(file)
     analysis_response = AnalysisResponse(
         session_id="",
@@ -191,6 +324,7 @@ async def process_audio(
     suppression_profile: str = Form(""),
     session_id: str = Form(""),
 ) -> ProcessResponse:
+    inference_backend = get_inference_backend()
     prepared = await _prepare_analysis(file)
     normalized_session_id = session_id.strip() if isinstance(session_id, str) else ""
     class_attenuation_factors = _build_suppression_profile(
@@ -248,6 +382,7 @@ async def process_audio(
 
 
 async def _prepare_analysis(file: UploadFile) -> PreparedAnalysis:
+    inference_backend = get_inference_backend()
     if not file.filename:
         raise HTTPException(status_code=400, detail="An uploaded file is required.")
 

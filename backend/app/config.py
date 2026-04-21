@@ -21,6 +21,17 @@ class AppConfig(BaseModel):
     default_suppression_factor: float = 0.2
     trained_model_manifest_path: str = "training/artifacts/real-v1/manifest.json"
     real_recordings_dir: str = "training/real_recordings"
+    real_recordings_manifest_path: str = "training/real_recordings/manifest.jsonl"
+    real_recordings_validation_ratio: float = 0.2
+    real_recordings_test_ratio: float = 0.1
+    real_recordings_split_seed: int = 7
+    training_runs_dir: str = "training/artifacts/runs"
+    training_output_dir: str = "training/artifacts/latest-auto"
+    training_versions_dir: str = "training/artifacts/versions"
+    active_model_state_path: str = "training/artifacts/active-model.json"
+    training_epochs: int = 8
+    training_batch_size: int = 8
+    training_learning_rate: float = 0.001
     session_store_dir: str = "backend/data/sessions"
     session_list_limit: int = 20
     supported_classes: list[str] = [

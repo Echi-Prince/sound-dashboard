@@ -96,6 +96,104 @@ class SavedRecordingResponse(BaseModel):
     message: str
 
 
+class RecordingListItem(BaseModel):
+    recording_id: str
+    label: str
+    split: str
+    filename: str
+    relative_path: str
+    byte_count: int
+    duration_ms: int
+    sample_rate_hz: int
+    created_at: str
+    updated_at: str
+    source_name: str
+
+
+class RecordingListResponse(BaseModel):
+    recordings: list[RecordingListItem]
+
+
+class RecordingDetailResponse(RecordingListItem):
+    wav_base64: str
+
+
+class RecordingUpdateRequest(BaseModel):
+    label: str
+    split: str = ""
+
+
+class DatasetSummaryResponse(BaseModel):
+    total_recordings: int
+    total_duration_ms: int
+    by_label: dict[str, int]
+    by_split: dict[str, int]
+    per_label_splits: dict[str, dict[str, int]]
+    manifest_relative_path: str
+    manifest_exists: bool
+    manifest_updated_at: str
+
+
+class ManifestSkippedFile(BaseModel):
+    relative_path: str
+    reason: str
+
+
+class BuildManifestResponse(BaseModel):
+    manifest_relative_path: str
+    total_examples: int
+    by_split: dict[str, int]
+    by_label: dict[str, int]
+    per_label_splits: dict[str, dict[str, int]]
+    skipped_count: int
+    skipped_files: list[ManifestSkippedFile]
+    updated_at: str
+    message: str
+
+
+class TrainingStatusResponse(BaseModel):
+    status: str
+    run_id: str
+    started_at: str
+    finished_at: str
+    manifest_relative_path: str
+    output_relative_path: str
+    epochs: int
+    batch_size: int
+    learning_rate: float
+    current_epoch: int
+    last_loss: float
+    last_val_accuracy: float
+    final_val_accuracy: float
+    message: str
+    error: str
+
+
+class ArtifactListItem(BaseModel):
+    artifact_id: str
+    model_name: str
+    relative_path: str
+    weights_relative_path: str
+    class_names: list[str]
+    training_example_count: int
+    validation_example_count: int
+    updated_at: str
+    is_active: bool
+    source_run_id: str
+
+
+class ArtifactListResponse(BaseModel):
+    artifacts: list[ArtifactListItem]
+
+
+class ActivateArtifactRequest(BaseModel):
+    artifact_id: str
+
+
+class ActivateArtifactResponse(ArtifactListItem):
+    message: str
+
+
 class SessionListItem(BaseModel):
     session_id: str
     filename: str

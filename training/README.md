@@ -21,6 +21,8 @@ What it contains
    - Training-only dependencies.
 9. Browser-assisted collection flow
    - The frontend can now record microphone audio and save labeled WAV clips into `training/real_recordings/` through the backend `POST /recordings` endpoint.
+10. Artifact version history
+   - Completed training runs are archived into `training/artifacts/versions/<run_id>/`, and the active manifest is tracked in `training/artifacts/active-model.json`.
 
 Dataset manifest format
 Each line is one JSON object:
@@ -68,6 +70,12 @@ training\.venv\Scripts\python -m training.build_real_manifest --source-dir train
 training\.venv\Scripts\python -m training.train --manifest training\real_recordings\manifest.jsonl --output-dir training\artifacts\real-v1
 ```
 
+Dashboard-managed training flow
+1. Save labeled WAV clips from the site into `training/real_recordings/`.
+2. Use the Dataset Manager to build the manifest and start a training run.
+3. The backend archives the exported `model.ts` and `manifest.json` into `training/artifacts/versions/<run_id>/`.
+4. The new version is promoted to active status automatically, and older versions remain selectable as backups.
+
 Exported files
 1. `model.ts`
    - TorchScript model artifact for backend inference.
@@ -80,3 +88,4 @@ Notes
 3. The synthetic generator is only for pipeline bring-up and local experimentation. Real detections will need real labeled recordings.
 4. `build_real_manifest.py` accepts either `real_recordings/<label>/*.wav` or `real_recordings/<split>/<label>/*.wav` layouts.
 5. The recording ingest route writes browser-captured WAV files into that same layout so manifest generation does not need a separate conversion step.
+6. The inference path now checks the active manifest first, then older archived manifests, before finally degrading to the baseline heuristic classifier.

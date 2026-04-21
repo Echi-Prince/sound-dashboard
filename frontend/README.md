@@ -8,7 +8,7 @@ Files
 2. `styles.css`
    - Visual layout, recording panel styling, per-class suppression controls, comparison playback controls, waveform and spectrogram styling, and timeline styling.
 3. `app.js`
-   - Upload flow, browser recording and WAV conversion, saved-session loading, training-set save requests, per-class suppression profile requests, original-versus-processed playback comparison, waveform and spectrogram decoding, and interactive playback/timeline behavior.
+   - Upload flow, automatic browser-side conversion of selected audio files into compatible WAV payloads, browser recording and WAV conversion, saved-session loading, training-set save requests, manifest and training controls, model-artifact activation requests, per-class suppression profile requests, original-versus-processed playback comparison, waveform and spectrogram decoding, and interactive playback/timeline behavior.
 
 Local Run
 1. From the repo root, the easiest launcher is:
@@ -27,4 +27,6 @@ python -m http.server 3000
 
 The page expects the backend API at `http://127.0.0.1:8000`.
 Saved sessions appear in the Recent Sessions panel when the backend session store is available.
+Selected audio files are converted into compatible WAV files in the browser before `/analyze` or `/process` requests are sent.
 Recorded clips can be labeled and saved into `training/real_recordings/` through the backend `POST /recordings` route.
+The Dataset Manager can also build the real-recordings manifest, start a training run, show training progress, and switch the active trained model artifact while leaving older versions available as backup candidates.
