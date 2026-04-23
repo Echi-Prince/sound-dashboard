@@ -7,6 +7,15 @@ __pycache__/
 *.pyc
 training/synthetic_data/
 training/artifacts/
+!training/artifacts/
+training/artifacts/*
+!training/artifacts/active-model.json
+!training/artifacts/versions/
+training/artifacts/versions/*
+!training/artifacts/versions/20260423T000854Z/
+training/artifacts/versions/20260423T000854Z/*
+!training/artifacts/versions/20260423T000854Z/manifest.json
+!training/artifacts/versions/20260423T000854Z/model.ts
 training/.deps/
 training/.venv/
 training/real_recordings/manifest.jsonl

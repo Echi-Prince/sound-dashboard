@@ -1,0 +1,29 @@
+{
+  "model_name": "waveform_cnn_v1",
+  "model_type": "torchscript_waveform_cnn",
+  "class_names": [
+    "dog_bark",
+    "keyboard",
+    "music",
+    "siren",
+    "speech",
+    "traffic",
+    "vacuum"
+  ],
+  "sample_rate_hz": 16000,
+  "input_sample_count": 16000,
+  "confidence_threshold": 0.45,
+  "weights_path": "model.ts",
+  "normalization_target_peak": 0.95,
+  "training_example_count": 4718,
+  "validation_example_count": 1350,
+  "class_distribution": {
+    "dog_bark": 733,
+    "keyboard": 33,
+    "music": 706,
+    "siren": 684,
+    "speech": 772,
+    "traffic": 1060,
+    "vacuum": 730
+  }
+}

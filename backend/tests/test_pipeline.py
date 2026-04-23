@@ -884,7 +884,7 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(activation_response.is_active)
         self.assertTrue(self._active_model_state_path.exists())
         active_state = json.loads(self._active_model_state_path.read_text(encoding="utf-8"))
-        self.assertTrue(active_state["active_manifest_path"].endswith("20260401T120000Z\\manifest.json"))
+        self.assertTrue(active_state["active_manifest_path"].endswith("20260401T120000Z/manifest.json"))
 
 
 if __name__ == "__main__":

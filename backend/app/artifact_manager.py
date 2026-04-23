@@ -88,7 +88,7 @@ def set_active_manifest_path(manifest_path: str, *, source_run_id: str = "") -> 
     state_path.write_text(
         json.dumps(
             {
-                "active_manifest_path": str(_resolve_path(manifest_path)),
+                "active_manifest_path": _storable_path(_resolve_path(manifest_path)),
                 "source_run_id": source_run_id,
             },
             indent=2,
@@ -163,6 +163,14 @@ def _encode_artifact_id(relative_path: str) -> str:
 
 def _relative_path(path: Path) -> str:
     return path.resolve().relative_to(_REPO_ROOT).as_posix()
+
+
+def _storable_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(_REPO_ROOT).as_posix()
+    except ValueError:
+        return str(resolved)
 
 
 def _resolve_path(path_value: str) -> Path:
