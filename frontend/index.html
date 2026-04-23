@@ -33,6 +33,7 @@
           <button type="button" class="workspace-tab is-active" data-toggle-section="record-audio">Recorder</button>
           <button type="button" class="workspace-tab is-active" data-toggle-section="recent-sessions-panel">Sessions</button>
           <button type="button" class="workspace-tab is-active" data-toggle-section="dataset-manager-panel">Dataset</button>
+          <button type="button" class="workspace-tab is-active" data-toggle-section="backend-explainer-panel">Backend</button>
           <button type="button" class="workspace-tab is-active" data-toggle-section="analysis-summary-panel">Summary</button>
           <button type="button" class="workspace-tab is-active" data-toggle-section="detected-events-panel">Events</button>
           <button type="button" class="workspace-tab is-active" data-toggle-section="playback-panel-section">Playback</button>
@@ -43,7 +44,7 @@
       <section id="analysis-upload" class="panel uploader dashboard-section" data-dashboard-section>
         <div>
           <h2>Analyze File</h2>
-          <p class="muted">Backend target: <code>http://127.0.0.1:8000/analyze</code></p>
+          <p class="muted">Backend target: same origin in deployed mode, localhost during local two-process development.</p>
         </div>
         <form id="upload-form" class="upload-form">
           <label class="file-input">
@@ -163,6 +164,16 @@
           <div id="dataset-recordings" class="session-list empty-state">No saved training clips yet.</div>
           <div id="dataset-detail" class="dataset-detail empty-state">Select a saved training clip to preview and edit it.</div>
         </div>
+      </section>
+
+      <section id="backend-explainer-panel" class="panel dashboard-section" data-dashboard-section>
+        <div class="section-head">
+          <div>
+            <h2>Backend Walkthrough</h2>
+            <p class="muted">What the API actually did with the audio you sent.</p>
+          </div>
+        </div>
+        <div id="backend-explainer" class="backend-explainer empty-state">Run an analysis to see each backend stage explained here.</div>
       </section>
 
       <section id="analysis-summary-panel" class="results-grid dashboard-section" data-dashboard-section>

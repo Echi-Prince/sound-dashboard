@@ -77,6 +77,7 @@ training\.venv\Scripts\python -m uvicorn backend.app.main:app --host 127.0.0.1 -
 ```
 
 The API will be available locally at `http://127.0.0.1:8000`.
+When the backend serves the frontend directly, the full dashboard is also available at `http://127.0.0.1:8000/`.
 
 Running Tests
 1. Install backend dependencies.
@@ -108,6 +109,24 @@ python -m http.server 3000
 
 4. Open `http://127.0.0.1:3000`.
 
+Single-Service Mode
+1. The FastAPI backend now also serves the `frontend/` static app at `/`.
+2. In deployed mode, the browser uses the same origin for both frontend and API requests.
+3. In the existing two-process local workflow, the frontend still talks to `http://127.0.0.1:8000`.
+
+Deploying From GitHub
+1. This repo now includes `render.yaml` for a single-service Render deployment.
+2. The committed trained model artifact is tracked in the repo and is used by default after deploy.
+3. Runtime-created recordings, sessions, manifests, and newly trained artifacts should live on persistent storage instead of ephemeral container disk.
+4. The included Render config mounts persistent storage at `/var/data` and points the app there with `SOUND_DASHBOARD_DATA_ROOT=/var/data/sound-dashboard`.
+5. To deploy on Render:
+
+```text
+Push to GitHub -> Create Blueprint on Render -> Select this repo -> Deploy
+```
+
+6. The deployed site will be available from the single web service URL, with the dashboard at `/` and the API on the same host.
+
 Run Both
 1. From the repo root, start both windows at once:
 
@@ -127,7 +146,7 @@ Notes
 9. Analysis metadata now includes preprocessing details such as target sample rate, sample count after resampling, and normalization gain.
 10. The analysis response also includes compact log-mel spectrogram summary statistics for model-ready feature inspection.
 11. `backend/requirements.txt` now includes `numpy` so realistic audio lengths remain fast enough for local analysis.
-12. Local CORS is enabled for `http://127.0.0.1:3000` and `http://localhost:3000` so the static frontend can call the backend during development.
+12. Local CORS is enabled for `http://127.0.0.1:3000` and `http://localhost:3000` so the static frontend can call the backend during development, and extra origins can be supplied with `SOUND_DASHBOARD_CORS_ALLOWED_ORIGINS`.
 13. `POST /process` is a prototype suppression path that currently attenuates detected class spans rather than doing true source separation.
 14. `training/` now contains an offline waveform-classifier training scaffold that exports a TorchScript model and JSON manifest for backend loading.
 15. `training/generate_synthetic_dataset.py` can create a local starter WAV dataset and manifest so the training/export path can be exercised before real labeled data is available.

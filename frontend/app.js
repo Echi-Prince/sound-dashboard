@@ -1,4 +1,13 @@
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL = resolveApiBaseUrl();
+const API_LABEL = API_BASE_URL || window.location.origin;
+
+function resolveApiBaseUrl() {
+  const currentOrigin = window.location.origin || "";
+  if (currentOrigin === "http://127.0.0.1:3000" || currentOrigin === "http://localhost:3000") {
+    return "http://127.0.0.1:8000";
+  }
+  return "";
+}
 
 const uploadForm = document.querySelector("#upload-form");
 const fileInput = document.querySelector("#file-input");
@@ -26,6 +35,7 @@ const recentSessions = document.querySelector("#recent-sessions");
 const datasetSummary = document.querySelector("#dataset-summary");
 const datasetRecordings = document.querySelector("#dataset-recordings");
 const datasetDetail = document.querySelector("#dataset-detail");
+const backendExplainer = document.querySelector("#backend-explainer");
 const detectionsCaption = document.querySelector("#detections-caption");
 const sessionSummary = document.querySelector("#session-summary");
 const metadataSummary = document.querySelector("#metadata-summary");
@@ -167,16 +177,19 @@ async function analyzeCurrentFile() {
     const formData = new FormData();
     formData.append("file", file);
     const response = await fetch(`${API_BASE_URL}/analyze`, { method: "POST", body: formData });
-    setStatus(`Backend response received for ${file.name}. Rendering the preview...`, false);
+    setStatus(`Backend response received for ${file.name}. Rendering results...`, false);
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Analysis request failed.");
-    await previewPromise;
     currentAnalysis = payload;
     currentSessionId = payload.session_id;
     activeDetectionIndex = payload.detections.length ? 0 : -1;
     renderAnalysis(payload);
     await refreshSessionList();
     setStatus(`Analysis complete for ${payload.filename}.`, false);
+    void previewPromise.then(() => {
+      if (currentAnalysis?.session_id !== payload.session_id) return;
+      renderInteractiveViews();
+    });
   } catch (error) {
     clearResults();
     currentFile = file;
@@ -197,7 +210,7 @@ async function prepareAudioPreview(file) {
     const context = getAudioContext();
     const audioBuffer = await context.decodeAudioData((await file.arrayBuffer()).slice(0));
     currentWaveformPeaks = buildWaveformPeaks(audioBuffer, 720);
-    currentSpectrogramFrames = buildSpectrogramFrames(audioBuffer, 256, 96);
+    currentSpectrogramFrames = buildSpectrogramFrames(audioBuffer, 256, 72);
     currentWaveformDurationMs = Math.round(audioBuffer.duration * 1000);
   } catch {
     currentWaveformPeaks = [];
@@ -611,6 +624,7 @@ function renderAnalysis(payload) {
   renderMetricList(metadataSummary, [["Input Rate", `${payload.metadata.sample_rate_hz} Hz`], ["Processed Rate", `${payload.metadata.processed_sample_rate_hz} Hz`], ["Duration", `${payload.metadata.duration_ms} ms`], ["Processed Samples", String(payload.metadata.processed_sample_count)], ["Normalization Gain", payload.metadata.normalization_gain.toFixed(3)], ["Resampled", payload.metadata.was_resampled ? "Yes" : "No"]]);
   renderMetricList(featureSummary, [["RMS", payload.features.rms.toFixed(6)], ["Peak", payload.features.peak_amplitude.toFixed(6)], ["Zero Crossings", payload.features.zero_crossing_rate.toFixed(6)], ["Activity Ratio", payload.features.dominant_activity_ratio.toFixed(6)]]);
   renderMetricList(spectralSummary, [["Frames", String(payload.spectral_features.frame_count)], ["Mel Bins", String(payload.spectral_features.mel_bin_count)], ["Mean dB", payload.spectral_features.mean_db.toFixed(3)], ["Dynamic Range", payload.spectral_features.dynamic_range_db.toFixed(3)]]);
+  renderBackendExplanation(payload);
   renderPlayback(payload);
   renderInteractiveViews();
   if (detectionsCaption) {
@@ -728,6 +742,64 @@ function renderInteractiveViews() {
 function renderMetricList(target, entries) {
   target.classList.remove("empty-state");
   target.innerHTML = entries.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+}
+
+function renderBackendExplanation(payload) {
+  if (!backendExplainer) return;
+  const durationSeconds = (payload.metadata.duration_ms / 1000).toFixed(2);
+  const preprocessingText = payload.metadata.was_resampled
+    ? `Resampled from ${payload.metadata.sample_rate_hz} Hz to ${payload.metadata.processed_sample_rate_hz} Hz and normalized with gain ${payload.metadata.normalization_gain.toFixed(3)}.`
+    : `Kept the original ${payload.metadata.sample_rate_hz} Hz sample rate and normalized with gain ${payload.metadata.normalization_gain.toFixed(3)}.`;
+  const detectionText = payload.detections.length
+    ? `${payload.detections.length} detection${payload.detections.length === 1 ? "" : "s"} survived thresholding and timeline merging.`
+    : "No detections survived thresholding, so the backend returned an empty event list.";
+  const classifierText = payload.used_fallback
+    ? `${payload.classifier_source} supplied the final result after the primary trained path did not return a confident class.`
+    : `${payload.classifier_source} supplied the final result directly.`;
+  const stages = [
+    {
+      name: "1. Decode Upload",
+      detail: `The backend accepted ${payload.filename} and decoded it as WAV audio for a ${durationSeconds}-second analysis pass.`,
+    },
+    {
+      name: "2. Preprocess Waveform",
+      detail: preprocessingText,
+    },
+    {
+      name: "3. Extract Features",
+      detail: `It computed waveform metrics like RMS, peak amplitude, zero crossings, and an activity ratio over ${payload.metadata.processed_sample_count} processed samples.`,
+    },
+    {
+      name: "4. Build Spectral Summary",
+      detail: `It also built a compact log-mel representation with ${payload.spectral_features.frame_count} frames, ${payload.spectral_features.mel_bin_count} mel bins, and ${payload.spectral_features.dynamic_range_db.toFixed(3)} dB of dynamic range.`,
+    },
+    {
+      name: "5. Run Classifier",
+      detail: classifierText,
+    },
+    {
+      name: "6. Merge Events",
+      detail: detectionText,
+    },
+  ];
+
+  backendExplainer.className = "backend-explainer";
+  backendExplainer.innerHTML = `
+    <div class="backend-summary-card">
+      <strong>Backend Message</strong>
+      <p>${escapeHtml(payload.message)}</p>
+    </div>
+    <div class="backend-summary-card">
+      <strong>Classifier Path</strong>
+      <p>${escapeHtml(classifierText)}</p>
+    </div>
+    <div class="backend-stage-list">
+      ${stages.map((stage) => `
+        <article class="backend-stage-card">
+          <h3>${escapeHtml(stage.name)}</h3>
+          <p>${escapeHtml(stage.detail)}</p>
+        </article>`).join("")}
+    </div>`;
 }
 
 function renderDetections(detections) {
@@ -1154,6 +1226,7 @@ function clearResults() {
   setEmpty(metadataSummary, "metric-list", "Waiting for results.");
   setEmpty(featureSummary, "metric-list", "Waiting for results.");
   setEmpty(spectralSummary, "metric-list", "Waiting for results.");
+  setEmpty(backendExplainer, "backend-explainer", "Run an analysis to see each backend stage explained here.");
   setEmpty(detectionsContainer, "detections", "No detections yet.");
   setEmpty(playbackPanel, "playback-panel", "Upload or record audio to enable playback controls.");
   setEmpty(timelineContainer, "timeline", "No timeline yet.");
@@ -1219,9 +1292,9 @@ async function checkBackendHealth() {
     if (!response.ok || payload.status !== "ok") {
       throw new Error("Backend health check failed.");
     }
-    setStatus("Frontend ready. Backend connection is healthy.", false);
+    setStatus(`Frontend ready. Backend connection is healthy at ${API_LABEL}.`, false);
   } catch {
-    setStatus("Frontend loaded, but the backend is not reachable at http://127.0.0.1:8000. Start the backend or run start-dev.cmd.", true);
+    setStatus(`Frontend loaded, but the backend is not reachable at ${API_LABEL}. Start the backend or run start-dev.cmd.`, true);
   }
 }
 

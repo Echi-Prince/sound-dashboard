@@ -469,7 +469,6 @@ class AudioPipelineTests(unittest.TestCase):
             [{"label": "keyboard", "confidence": 0.84, "start_ms": 0, "end_ms": 4644}],
         )
 
-
 class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         super().setUp()

@@ -3,9 +3,11 @@ import json
 import math
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .audio import (
     decode_wav,
@@ -64,7 +66,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:3000", "http://localhost:3000"],
+    allow_origins=settings.cors_allowed_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -414,6 +416,8 @@ async def _prepare_analysis(file: UploadFile) -> PreparedAnalysis:
         sample_rate_hz=processed_audio.sample_rate_hz,
         chunk_duration_ms=settings.chunk_duration_ms,
         chunk_overlap_ms=settings.chunk_overlap_ms,
+        full_clip_features=features,
+        full_clip_spectral_features=spectral_features,
     )
     detections = [
         DetectionResult(**detection)
@@ -440,6 +444,8 @@ def build_windowed_detections(
     sample_rate_hz: int,
     chunk_duration_ms: int,
     chunk_overlap_ms: int,
+    full_clip_features: object | None = None,
+    full_clip_spectral_features: object | None = None,
 ) -> tuple[list[dict[str, float | int | str]], list[str], bool]:
     chunk_sample_count = max(1, int((chunk_duration_ms / 1000) * sample_rate_hz))
     overlap_sample_count = max(0, int((chunk_overlap_ms / 1000) * sample_rate_hz))
@@ -460,14 +466,13 @@ def build_windowed_detections(
         if not window_samples:
             continue
 
-        window_features = extract_features(
-            samples=window_samples,
-            sample_rate_hz=sample_rate_hz,
+        is_single_window = (
+            start_index == 0
+            and end_index >= len(samples)
+            and len(window_starts) == 1
         )
-        window_spectral_features = extract_log_mel_features(
-            samples=window_samples,
-            sample_rate_hz=sample_rate_hz,
-        )
+        window_features = full_clip_features if is_single_window else None
+        window_spectral_features = full_clip_spectral_features if is_single_window else None
         prediction_result = _predict_window(
             classifier=classifier,
             samples=window_samples,
@@ -509,8 +514,8 @@ def _predict_window(
     classifier: object,
     samples: list[float],
     sample_rate_hz: int,
-    features: object,
-    spectral_features: object,
+    features: object | None,
+    spectral_features: object | None,
 ) -> PredictionResult:
     if hasattr(classifier, "predict_with_metadata"):
         return classifier.predict_with_metadata(
@@ -518,6 +523,16 @@ def _predict_window(
             sample_rate_hz=sample_rate_hz,
             features=features,
             spectral_features=spectral_features,
+        )
+
+    if features is None or spectral_features is None:
+        features = extract_features(
+            samples=samples,
+            sample_rate_hz=sample_rate_hz,
+        )
+        spectral_features = extract_log_mel_features(
+            samples=samples,
+            sample_rate_hz=sample_rate_hz,
         )
 
     raw_predictions = classifier.predict(
@@ -695,3 +710,8 @@ def _build_suppression_profile(
     return {
         label: attenuation_factor for label in _parse_suppressed_classes(suppressed_classes)
     }
+
+
+_FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+if _FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")

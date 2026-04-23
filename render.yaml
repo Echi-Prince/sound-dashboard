@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: sound-dashboard
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: SOUND_DASHBOARD_DATA_ROOT
+        value: /var/data/sound-dashboard
+    disk:
+      name: sound-dashboard-data
+      mountPath: /var/data
+      sizeGB: 10

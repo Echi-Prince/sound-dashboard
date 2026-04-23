@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .audio import ComputedFeatures, SpectralFeatures
+from .audio import (
+    ComputedFeatures,
+    SpectralFeatures,
+    extract_features,
+    extract_log_mel_features,
+)
 from .classifier import (
     BaselineSoundClassifier,
     ClassPrediction,
@@ -133,8 +138,8 @@ class InferenceBackend:
         self,
         samples: list[float],
         sample_rate_hz: int,
-        features: ComputedFeatures,
-        spectral_features: SpectralFeatures,
+        features: ComputedFeatures | None,
+        spectral_features: SpectralFeatures | None,
     ) -> list[ClassPrediction]:
         return self.predict_with_metadata(
             samples=samples,
@@ -147,8 +152,8 @@ class InferenceBackend:
         self,
         samples: list[float],
         sample_rate_hz: int,
-        features: ComputedFeatures,
-        spectral_features: SpectralFeatures,
+        features: ComputedFeatures | None,
+        spectral_features: SpectralFeatures | None,
     ) -> PredictionResult:
         trained_candidates = self.trained_predictors or []
         if not trained_candidates and self.manifest is not None:
@@ -176,6 +181,16 @@ class InferenceBackend:
                         source_name=candidate.name,
                         used_fallback=candidate_index > 0,
                     )
+
+        if features is None or spectral_features is None:
+            features = extract_features(
+                samples=samples,
+                sample_rate_hz=sample_rate_hz,
+            )
+            spectral_features = extract_log_mel_features(
+                samples=samples,
+                sample_rate_hz=sample_rate_hz,
+            )
 
         predictor = self.fallback_predictor or self.predictor
         if hasattr(predictor, "predict_ranked"):
