@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="sound-dashboard-api-base-url" content="" />
     <title>Sound Dashboard</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -44,7 +45,7 @@
       <section id="analysis-upload" class="panel uploader dashboard-section" data-dashboard-section>
         <div>
           <h2>Analyze File</h2>
-          <p class="muted">Backend target: same origin in deployed mode, localhost during local two-process development.</p>
+          <p class="muted">Backend target: same origin by default, `127.0.0.1:8000` for the local `:3000` dev server, or an explicit override via config.</p>
         </div>
         <form id="upload-form" class="upload-form">
           <label class="file-input">

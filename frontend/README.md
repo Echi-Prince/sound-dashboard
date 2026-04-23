@@ -25,7 +25,22 @@ python -m http.server 3000
 
 3. Open `http://127.0.0.1:3000`.
 
-The page expects the backend API at `http://127.0.0.1:8000`.
+The page defaults to `http://127.0.0.1:8000` when opened from `http://127.0.0.1:3000` or `http://localhost:3000`.
+For other frontend origins, configure the backend API base URL with either:
+
+```html
+<meta name="sound-dashboard-api-base-url" content="https://your-backend-host" />
+```
+
+or:
+
+```html
+<script>
+  window.SOUND_DASHBOARD_API_BASE_URL = "https://your-backend-host";
+</script>
+```
+
+If no override is supplied outside the local `:3000` workflow, the frontend uses same-origin requests.
 Saved sessions appear in the Recent Sessions panel when the backend session store is available.
 Selected audio files are converted into compatible WAV files in the browser before `/analyze` or `/process` requests are sent.
 Already-compatible PCM WAV files are reused directly so large valid uploads do not pay the browser-side conversion cost again.
